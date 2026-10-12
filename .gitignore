@@ -1,0 +1,53 @@
+# ── 비밀정보 ─────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.*
+
+# ── 입력/출력 데이터 (사업자 정보 — 커밋 금지) ──────────────
+# 원본 리스트와 수집 결과는 저장소에 올리지 않습니다.
+*.csv
+*.xlsx
+*.xls
+!**/sample_*.csv
+data/
+output/
+exports/
+
+# ── Python ──────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# ── DB / 로그 / 캐시 ────────────────────────────────────────
+*.db
+*.sqlite
+*.sqlite3
+*.log
+logs/
+.cache/
+.http_cache/
+
+# ── OS / 에디터 ─────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# 사내 CA 번들 (scripts/setup_ca.py 로 생성 — 환경마다 다름)
+certs/
+
+# 자격증명이 담긴 스크린샷 (image.png 에 NCP Client Secret 평문 포함)
+image.png
+*.png
+!docs/**/*.png
