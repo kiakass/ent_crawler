@@ -83,9 +83,9 @@ def main() -> int:
     check((ROOT / "certs" / "ca-bundle.pem").exists(), "certs/ca-bundle.pem",
           "사내망이면 python scripts/setup_ca.py (사내망 밖이면 무시)", required=False)
 
-    print("\n준비 파일 (저장소에 없음 — README 3절)")
+    print("\n준비 파일 (README 3절)")
     check(any((ROOT / "design" / n).exists() for n in ("업종분류.csv", "업종분류.md")),
-          "design/업종분류.md", "사내 업종분류표를 받아 design/ 에 둔다 (병합 단계 필수)")
+          "design/업종분류.md", "저장소에 포함된 파일 — git pull 또는 git checkout design/업종분류.md (병합 단계 필수)")
     check(any((ROOT / "data/external/nps").glob("*.csv")), "data/external/nps/*.csv",
           "data.go.kr 15083277 월별 CSV (없으면 국민연금 API 만 — 하루 약 4,700행)", required=False)
     check((ROOT / "data/external/ksic/ksic11_세세분류.csv").exists(), "data/external/ksic/ksic11_세세분류.csv",

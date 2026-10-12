@@ -7,7 +7,7 @@
 매일 정해진 시각에 한도만큼 처리하고 다음 날 이어 간다.
 
 - 실행 환경: **macOS** (자동 실행은 launchd 또는 Python 스케줄러) · **Python 3.10 이상** (개발은 3.14)
-- 저장소에는 코드와 샘플 10건만 있다. API 키 · 실제 입력 목록 · 수집 결과 · 로그는 없고 들어가서도 안 된다 ([10절](#10-주의--개인정보--보안))
+- 저장소에는 코드 · 업종분류표 · 샘플 10건만 있다. API 키 · 실제 입력 목록 · 수집 결과 · 로그는 없고 들어가서도 안 된다 ([10절](#10-주의--개인정보--보안))
 - Claude Code 로 작업한다면 저장소의 [`CLAUDE.md`](CLAUDE.md) 를 Claude Code 가 자동으로 읽는다 — "README 대로 설치하고 샘플을 돌려줘" 라고 하면 된다
 
 ---
@@ -19,7 +19,7 @@ git clone https://github.com/kiakass/ent_crawler.git && cd ent_crawler
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt && python -m playwright install chromium
 python scripts/setup_check.py --init        # .env 템플릿 · 작업 폴더 생성 → 빠진 것 목록
-#   → .env 에 키 입력 (2절) · design/업종분류.md 받기 (3절) · 사내망이면 python scripts/setup_ca.py
+#   → .env 에 키 입력 (2절) · (권장) 국민연금 월별 CSV (3절) · 사내망이면 python scripts/setup_ca.py
 python scripts/setup_check.py               # '필수 항목 모두 있음' 이 나올 때까지
 python scripts/run_sample.py                # 샘플 10건으로 전 과정 시험 (4절)
 
@@ -34,7 +34,7 @@ python scripts/batch.py status --job SME1101   # 매일 확인 (7절)
 
 1. [처음 설치](#1-처음-설치)
 2. [API 키 발급 · `.env`](#2-api-키-발급--env)
-3. [저장소에 없는 준비 파일](#3-저장소에-없는-준비-파일)
+3. [준비 파일](#3-준비-파일)
 4. [샘플로 시험](#4-샘플로-시험)
 5. [실제 목록으로 배치 시작](#5-실제-목록으로-배치-시작)
 6. [매일 자동 실행 — launchd / Python 스케줄러](#6-매일-자동-실행--launchd--python-스케줄러)
@@ -102,11 +102,11 @@ export SSL_CERT_FILE=$PWD/certs/ca-bundle.pem
 
 ---
 
-## 3. 저장소에 없는 준비 파일
+## 3. 준비 파일
 
 | 파일 | 필수 | 없으면 | 구하는 법 |
 | --- | --- | --- | --- |
-| `design/업종분류.md` | **필수** | 병합 단계가 파일 없음으로 실패 | 사내 업종분류표 (CSV 형식: `업종대,업종중,업종소`). 담당자에게 받아 `design/` 에 둔다 |
+| `design/업종분류.md` | **필수** | 병합 단계가 파일 없음으로 실패 | **저장소에 포함돼 있다** — 사내 업종분류표 (CSV 형식: `업종대,업종중,업종소`). 분류를 바꿀 때만 고친다 |
 | `data/external/nps/*.csv` | 권장 | 국민연금 업종을 API 로만 채워 하루 약 4,700행밖에 못 함 | data.go.kr 파일데이터 **15083277** "국민연금공단_국민연금 가입 사업장 내역" 월별 CSV(cp949) 를 받아 그대로 둔다. 여러 개면 이름순 마지막 파일을 쓴다 |
 | `data/external/ksic/ksic11_세세분류.csv` · `ksic10_세세분류.csv` | 선택 | 표준산업분류 코드 칸이 비어 있음 (다른 항목은 정상) | 통계청 "한국표준산업분류 제11차 개정 분류체계(대-중-소-세-세세 구분)" xlsx 를 받아 `python scripts/extract_ksic.py <xlsx 경로>` |
 
@@ -382,7 +382,7 @@ python scripts/batch.py status --job SME1101
 | 크롤러 로그에 `database is locked` | daily 와 크롤러가 동시에 씀 — 크롤러가 30초 뒤 자동으로 이어 간다. 계속 늘면 로그 확인 |
 | 배치가 그날 안 돎 | Mac 이 잠들었거나 로그아웃 — 6.3 · `scripts/batch_launchd.sh status <잡>` |
 | `pull` 했는데 크롤러 동작이 그대로 | 상주 크롤러 재시작 — 6.4 |
-| 업종분류 관련 `FileNotFoundError` | `design/업종분류.md` 없음 — 3절 |
+| 업종분류 관련 `FileNotFoundError` | `design/업종분류.md` 없음 — `git pull` 로 받거나 `git checkout design/업종분류.md` |
 
 ---
 

@@ -15,7 +15,6 @@ Claude Code 가 이 저장소에서 작업할 때 따르는 지침. 사람용 �
 2. `python scripts/setup_check.py --init` — `.env` 템플릿 복사 · 폴더 생성 · 빠진 것 목록 (외부 호출 0회, 키 값은 출력 안 함)
 3. **사용자가 직접 할 일**을 목록으로 안내하고 기다린다. Claude 가 대신할 수 없다:
    - API 키 발급 후 `.env` 입력 (README 2절). 키는 **사용자 본인 계정으로 새로 발급** — 남의 키를 쓰면 한도 장부가 따로 놀아 함께 초과한다
-   - `design/업종분류.md` (사내 업종분류표 — 저장소에 없음, 담당자에게 받는다)
    - (권장) 국민연금 월별 CSV → `data/external/nps/` · (선택) 통계청 KSIC xlsx → `python scripts/extract_ksic.py <xlsx>`
    - `sudo pmset repeat wakeorpoweron MTWRFSU 00:05:00` (sudo 라 사용자가 `! ` 로 직접)
 4. 사내망이면 `python scripts/setup_ca.py` → `export SSL_CERT_FILE=$PWD/certs/ca-bundle.pem`
@@ -46,8 +45,8 @@ grep -c "database is locked" logs/batch/kr.lguplus.bizcrawler.<잡>.crawl.err.lo
 - **응답 · 로그 · 보고에 고객 데이터(상호명 · 사업자번호 · 연락처 · 주소)를 쓰지 않는다. 집계 · 비율 · 분포로만 보고한다.**
   개별 행은 사용자가 먼저 그 행을 지목했을 때만 최소 범위로. 터미널 출력 스크립트도 원문을 덤프하지 않게 짠다
 - 대표자명 · 대표자 이메일 · 휴대폰(`crawl_mobile`)은 결과로 내보내지 않는다 — 대표전화로 병합하지 않는 이유
-- 이 저장소는 **public** 이다. `.env` · `certs/` · `input/` · `data/` · `output/` · `logs/` · CSV/XLSX 를 커밋하지 않는다
-  (`samples/sample_*.csv` 만 예외 — 사업자가 스스로 공개한 번호만). 커밋 전 `git status` 와 staged 파일 목록을 확인
+- 이 저장소는 **public** 이다. `.env` · `certs/` · `input/` · `data/` · `output/` · `logs/` · CSV/XLSX · `design/`(내부 문서) 를 커밋하지 않는다
+  (예외: `samples/sample_*.csv` — 사업자가 스스로 공개한 번호만 · `design/업종분류.md` — 업종분류표, 병합 필수). 커밋 전 `git status` 와 staged 파일 목록을 확인
 
 ### 코드
 - 외부 HTTP 는 **반드시 `biz_crawler.config.http_client()`** 로 만든다. `httpx.Client` 를 직접 만들면 사내 CA 를 빼먹는다. `verify=False` 금지
