@@ -51,3 +51,9 @@ certs/
 image.png
 *.png
 !docs/**/*.png
+
+# 내부 문서 · 메모 (인계 · 작업계획 · 사내 업종분류표) — 공개 저장소에 올리지 않음
+design/
+todo/
+cmd.md
+테스트
