@@ -90,7 +90,7 @@ export SSL_CERT_FILE=$PWD/certs/ca-bundle.pem
 | | ① 국세청_사업자등록정보 진위확인 및 상태조회 서비스 | 국세청 100만 |
 | | ② 공정거래위원회_통신판매사업자 등록상세 제공 서비스 | 공정위 1만 |
 | | ③ 국민연금공단_국민연금 가입 사업장 내역 (V2) | 국민연금 1만 |
-| `NCP_APIGW_KEY_ID` · `NCP_APIGW_KEY` | [console.ncloud.com](https://console.ncloud.com) → API Gateway / Maps 이용 신청 → Application 등록 → 지역검색 API 선택 → 인증 정보의 Client ID · Client Secret | NAVER 2.5만 · 월 77.5만 |
+| `NCP_APIGW_KEY_ID` · `NCP_APIGW_KEY` | [console.ncloud.com](https://console.ncloud.com) → Services → Application Service → NAVER API HUB 이용 신청 → Application 등록 → 인증 정보 팝업의 Client ID · Client Secret | NAVER 2.5만 · 월 77.5만 |
 | `JUSO_CONFM_KEY` | [business.juso.go.kr](https://business.juso.go.kr) → 도로명주소 검색 API 신청 → 승인키 | 우편번호 (개발키는 만료일이 있다 — 장기 운영은 운영키 신청) |
 | `CRAWLER_CONTACT` | 운영 공용 메일 주소 (개인 메일 X) | 크롤링 요청의 `From` 헤더 — 사이트 운영자가 연락할 창구 |
 | `CA_BUNDLE` | (선택) 비워둔다 | 비워두면 `certs/ca-bundle.pem` → certifi 순 |
