@@ -35,7 +35,8 @@ REGISTRY_DB = BATCH_ROOT / "registry.db"
 #   failed   실패(사유는 각 *_error)
 STATE_FIELDS = [
     "nts_state", "ftc_state", "nps_state",
-    "naver_state",          # pending → retry_pending → done (matched 면 바로 done)
+    "kcw_state",            # 상호 빈 행만 pending (공정위가 상호를 주면 skipped)
+    "naver_state",         # pending → retry_pending → done (matched 면 바로 done)
     "crawl_state",          # waiting · pending · running · done · failed_tmp · failed · skipped
     "crawl_tries", "crawl_next_at", "crawl_claimed_at",
     "dirty", "updated_at",
@@ -108,7 +109,7 @@ class JobStore:
         for f in [*ALL_FIELDS, *STATE_FIELDS]:
             if f not in have:
                 self.conn.execute(f"ALTER TABLE rows ADD COLUMN {_q(f)} TEXT DEFAULT ''")
-        for f in ("nts_state", "ftc_state", "nps_state", "naver_state", "crawl_state",
+        for f in ("nts_state", "ftc_state", "nps_state", "kcw_state", "naver_state", "crawl_state",
                   "dirty", "updated_at"):
             self.conn.execute(f"CREATE INDEX IF NOT EXISTS ix_{f} ON rows({_q(f)})")
         self.conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
@@ -146,11 +147,14 @@ class JobStore:
             row = {
                 "b_no": b_no, "b_no_display": format_display(b_no) if b_no else "",
                 "input_name": name,
-                # 사업자번호가 없으면 국세청·공정위·국민연금은 대상이 아니다
+                # 사업자번호가 없으면 국세청·공정위·국민연금은 대상이 아니다.
+                # 상호가 비어도 공정위 · 근로복지공단 상호로 국민연금 · NAVER 를 할 수 있어 pending 으로 둔다
+                # (이름을 끝내 못 얻으면 각 단계가 skipped 로 바꾼다)
                 "nts_state": "pending" if b_no else "skipped",
                 "ftc_state": "pending" if b_no else "skipped",
-                "nps_state": "pending" if b_no and name else "skipped",
-                "naver_state": "pending" if name else "skipped",
+                "kcw_state": "pending" if b_no and not name else "skipped",
+                "nps_state": "pending" if b_no else "skipped",
+                "naver_state": "pending" if name or b_no else "skipped",
                 "crawl_state": "waiting", "crawl_tries": "0",
                 "dirty": "1", "updated_at": stamp,
             }

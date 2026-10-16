@@ -90,6 +90,7 @@ export SSL_CERT_FILE=$PWD/certs/ca-bundle.pem
 | | ① 국세청_사업자등록정보 진위확인 및 상태조회 서비스 | 국세청 100만 |
 | | ② 공정거래위원회_통신판매사업자 등록상세 제공 서비스 | 공정위 1만 |
 | | ③ 국민연금공단_국민연금 가입 사업장 내역 (V2) | 국민연금 1만 |
+| | ④ (선택) 근로복지공단_고용·산재보험 가입현황 정보 — 상호 없이 사업자번호만 있는 목록용 | 근로복지공단 1만 |
 | `NCP_APIGW_KEY_ID` · `NCP_APIGW_KEY` | [console.ncloud.com](https://console.ncloud.com) → Services → Application Service → NAVER API HUB 이용 신청 → Application 등록 → 인증 정보 팝업의 Client ID · Client Secret | NAVER 2.5만 · 월 77.5만 |
 | `JUSO_CONFM_KEY` | [business.juso.go.kr](https://business.juso.go.kr) → 도로명주소 검색 API 신청 → 승인키 | 우편번호 (개발키는 만료일이 있다 — 장기 운영은 운영키 신청) |
 | `CRAWLER_CONTACT` | 운영 공용 메일 주소 (개인 메일 X) | 크롤링 요청의 `From` 헤더 — 사이트 운영자가 연락할 창구 |
@@ -164,6 +165,9 @@ python scripts/run_sample.py --reset    # 처음부터 다시
 
 형식은 `samples/sample_input.csv` 와 같다. 다른 컬럼이 더 있어도 된다.
 
+**사업자번호만 있는 목록**도 된다 — 상호명 컬럼은 두되 값을 비운다. 상호는 공정위 → 근로복지공단(④ 활용신청 필요) 순으로
+사업자번호로 찾아 국민연금 · NAVER 에 쓴다. 두 곳 모두 없는 행(직원 없는 1인 사업자 · 폐업자가 많다)은 국세청 상태만 남는다.
+
 > Excel 에서 만든 목록은 사업자번호 칸이 `1.82E+09` 처럼 바뀌어 있지 않은지 먼저 본다. 그런 행은 복구가 안 되고 적재 때 오류로 센다.
 
 ### 5.2 한 번에 시작 — `start_batch.py`
@@ -196,6 +200,7 @@ python scripts/batch.py daily  --job SME1101 --with-crawl                    # �
 | --- | --- | --- |
 | 1 | `nts` 국세청 | 계속/휴업/폐업 상태 · 폐업일 (100건/호출) |
 | 2 | `ftc` 공정위 | 통신판매업 신고 정보 — 상호 · 주소 · 전화 · 도메인 |
+| 2b | `kcw` 근로복지공단 | 상호가 비고 공정위에도 없는 행만 — 상호 · 주소 · 우편번호 (사업자번호 10자리 정확 일치) |
 | 3 | `nps` 국민연금 | 월별 파일 조인 → 안 되는 행만 API — 업종코드 · 주소 · 우편번호 |
 | 4 | `naver` NAVER | 지역검색으로 업소 매칭 — 주소 · 홈페이지 링크 · 카테고리. 1차 → 미매칭은 질의를 바꿔 재시도 |
 | 5 | `crawl` 크롤링 | 확보된 홈페이지에서 전화 · 이메일 (`--with-crawl` 일 때만. 자동 실행에서는 상주 크롤러가 함) |
@@ -204,6 +209,8 @@ python scripts/batch.py daily  --job SME1101 --with-crawl                    # �
 | 8 | `export` 내보내기 | `snapshot.csv` · `delta_YYYYMMDD.csv` · 실적 1행 |
 
 한 단계가 오류나 한도로 멈춰도 다음 단계는 돈다. 같은 날 여러 번 돌려도 한도 장부를 공유하므로 한도를 넘지 않는다.
+다른 키로 시험할 때는 `.env.test`(커밋 제외)에 키와 `QUOTA_TAG_NAVER=이름` 을 두고 `set -a; source .env.test; set +a` 뒤 실행한다 —
+그 키의 사용량은 `naver@이름` 으로 따로 센다.
 상태가 `partial` 이면 **하루 한도를 다 써서 정상적으로 멈춘 것**이다.
 
 ---

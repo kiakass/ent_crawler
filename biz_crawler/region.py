@@ -43,8 +43,8 @@ def sigungu(address: str | None) -> str:
 
 
 def known_address(row: dict) -> str:
-    """사업자번호로 확정된 주소 — 공정위 > 국민연금."""
-    for col in ("ftc_road_address", "ftc_lot_address", "nps_address"):
+    """사업자번호로 확정된 주소 — 공정위 > 근로복지공단 > 국민연금."""
+    for col in ("ftc_road_address", "ftc_lot_address", "kcw_address", "nps_address"):
         v = (row.get(col) or "").strip()
         if v and v not in _EMPTY:
             return v

@@ -319,6 +319,41 @@ def stage_ftc(store: JobStore, registry: Registry, quota: Quota, *,
     return res
 
 
+# ── 02a 근로복지공단 — 상호 없는 행의 상호 · 주소 ─────────────────────
+
+def stage_kcw(store: JobStore, quota: Quota, *, max_rows: int | None = None) -> StageResult:
+    """입력 상호가 비어 있고 공정위도 상호를 주지 못한 행만 조회한다 (일 10,000회라 아낀다)."""
+    from ..kcomwel import KcomwelClient
+
+    res = StageResult("kcw")
+    # 공정위가 끝난 행만 — 공정위 상호가 있으면 조회하지 않는다
+    store.conn.execute("UPDATE rows SET kcw_state='skipped' WHERE kcw_state='pending' "
+                       "AND ftc_state IN ('done','skipped') AND ftc_company_name<>''")
+    targets = store.select("kcw_state='pending' AND ftc_state IN ('done','skipped')", limit=max_rows)
+    if not targets:
+        res.status = "skipped"
+        return res
+    hit = 0
+    with KcomwelClient() as client, \
+            _Tx(store, "근로복지공단", len(targets), lambda: f"찾음 {hit:,} · 남은 예산 {quota.remaining('kcw'):,}",
+                hold=False) as tx:
+        for row in targets:
+            if not quota.can("kcw", 3):
+                res.status, res.stop_reason = "partial", quota.stopped.get("kcw", "근로복지공단 일 예산 소진")
+                break
+            before = client.calls
+            r = client.lookup(row["b_no"])
+            quota.record("kcw", client.calls - before, e429="429" in r.error, error=r.status == "error")
+            upd = r.to_row()
+            store.update(row["row_no"], {**upd, "kcw_state": "pending" if r.status == "error" else "done"})
+            hit += r.status == "matched"
+            tx.tick()
+            res.rows_done += 1
+        res.calls = client.calls
+    res.extra["matched"] = hit
+    return res
+
+
 # ── 02b 국민연금 — 월별 파일 조인 · API 보완 ───────────────────────
 
 def latest_nps_file() -> Path | None:
@@ -364,7 +399,12 @@ def stage_nps(store: JobStore, quota: Quota, *, use_api: bool = True,
         hit = 0
         with _Tx(store, "국민연금 파일", len(pending)) as tx:
             for row in pending:
-                name = (row.get("final_company_name") or row["input_name"]).strip()
+                name = _known_name(row)
+                if not name:        # 앞 6자리만으로는 확정할 수 없다 · 근로복지공단 대기 중이면 다음 실행에
+                    if row.get("kcw_state") != "pending":
+                        store.update(row["row_no"], {"nps_state": "skipped"}, dirty=False)
+                    tx.tick()
+                    continue
                 cands = idx.get(row["b_no"][:6], [])
                 best = max(cands, key=lambda c: (similarity(name, _site_name(c[0])), c[1] == "1"),
                            default=None)
@@ -401,8 +441,13 @@ def stage_nps(store: JobStore, quota: Quota, *, use_api: bool = True,
             if not quota.can("nps", 3):
                 res.status, res.stop_reason = "partial", quota.stopped.get("nps", "국민연금 API 일 예산 소진")
                 break
+            name = _known_name(row)
+            if not name:
+                if row.get("kcw_state") != "pending":
+                    store.update(row["row_no"], {"nps_state": "skipped"}, dirty=False)
+                tx.tick()
+                continue
             before = client.calls
-            name = (row.get("final_company_name") or row["input_name"]).strip()
             r = client.lookup(row["b_no"], name)
             quota.record("nps", client.calls - before, e429="429" in r.error)
             upd = r.to_row()
@@ -420,6 +465,17 @@ def stage_nps(store: JobStore, quota: Quota, *, use_api: bool = True,
 
 
 # ── 03 NAVER — 1차 · 재시도 ─────────────────────────────────
+
+def _known_name(row: dict) -> str:
+    """국민연금 채점용 상호 — 병합 결과 > 입력 > 공정위 > 근로복지공단 (사업자번호만 받은 목록)."""
+    return (row.get("final_company_name") or row.get("input_name")
+            or row.get("ftc_company_name") or row.get("kcw_name") or "").strip()
+
+
+def _query_name(row: dict) -> str:
+    """NAVER 질의 상호 — 입력 상호, 없으면 사업자번호로 확정된 공정위 · 근로복지공단 상호."""
+    return (row.get("input_name") or row.get("ftc_company_name") or row.get("kcw_name") or "").strip()
+
 
 def _region_hint(row: dict) -> str:
     """NAVER 지역 키워드 — 사업자번호로 확정된 주소(공정위 > 국민연금)의 시·군·구."""
@@ -449,7 +505,14 @@ def stage_naver(store: JobStore, registry: Registry, quota: Quota, *, max_rows: 
             if not quota.can("naver", 2):
                 res.status, res.stop_reason = "partial", quota.stopped.get("naver", "NAVER 일 예산 소진")
                 break
-            name, region = row["input_name"], _region_hint(row)
+            name, region = _query_name(row), _region_hint(row)
+            if not name:
+                # 공정위 · 근로복지공단이 끝났는데도 상호가 없으면 검색할 말이 없다. 대기 중이면 다음 실행에
+                if row.get("ftc_state") in ("done", "skipped") \
+                        and (row.get("kcw_state") or "skipped") in ("done", "skipped"):
+                    store.update(row["row_no"], {"naver_state": "skipped"}, dirty=False)
+                tx.tick()
+                continue
             key = f"p1|{name}|{region}"
             cached = registry.cache_get(key)
             if cached is not None:
@@ -479,8 +542,8 @@ def stage_naver(store: JobStore, registry: Registry, quota: Quota, *, max_rows: 
             tx.phase("NAVER 재시도", len(retry_rows),
                      lambda: f"개선 {stats['improved']:,} · 남은 예산 {quota.remaining('naver'):,}")
             for row in retry_rows:
-                name, region = row["input_name"], _region_hint(row)
-                need = max(1, len(query_variants(name, region)))
+                name, region = _query_name(row), _region_hint(row)
+                need =max(1, len(query_variants(name, region)))
                 if not quota.can("naver", need):
                     res.status, res.stop_reason = "partial", quota.stopped.get("naver", "NAVER 일 예산 소진")
                     break
@@ -642,6 +705,9 @@ def resolve_zip(row: dict, client, registry: Registry, quota: Quota | None) -> d
     from ..region import sido
 
     addr = (row.get("final_address") or "").strip()
+    kcw_zip = (row.get("kcw_zip") or "").strip()
+    if kcw_zip and addr == (row.get("kcw_address") or "").strip():
+        return {"final_zipcode": kcw_zip, "zip_source": "근로복지공단", "zip_addr": addr}
     nps_zip = (row.get("nps_zip") or "").strip()
     if nps_zip and addr == (row.get("nps_address") or "").strip():
         # 최종 주소가 국민연금 주소면 국민연금 우편번호가 정확하다 (건물번호 없는 주소로 검색하면 '첫 결과' 추정)

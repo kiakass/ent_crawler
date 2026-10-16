@@ -170,8 +170,12 @@ def cmd_plan(args: argparse.Namespace) -> int:
     nts = store.count("nts_state='pending'")
     ftc = store.count("ftc_state='pending'")
     nps = store.count("nps_state IN ('pending','api_pending')")
+    kcw = store.count("kcw_state='pending'")
     print(f"  국세청 대기 {nts:,}행 → {math.ceil(nts / 100):,}회")
     print(f"  공정위 대기 {ftc:,}행")
+    if kcw:
+        print(f"  근로복지공단 대기 {kcw:,}행 (상호 빈 행 · 공정위 미등록만) → 최대 {kcw:,}회 "
+              f"= {math.ceil(kcw / math.floor(DAILY_LIMIT['kcw'] * 0.95))}일")
     print(f"  국민연금 대기 {nps:,}행 (파일 조인 우선)")
     print(f"  NAVER 1차 대기 {e['p1']:,}행 · 재시도 대기 {e['rt']:,}행 → 약 {e['naver_calls']:,}회 "
           f"= {e['days']}일 (하루 {math.floor(DAILY_LIMIT['naver'] * 0.95):,}회)")
@@ -202,6 +206,8 @@ def cmd_daily(args: argparse.Namespace) -> int:
             _run_stage(store, "nts", lambda: stages.stage_nts(store, quota)),
             _run_stage(store, "ftc", lambda: stages.stage_ftc(store, registry, quota,
                                                                api_max=args.ftc_api_max)),
+            # 상호 빈 행의 상호 — 국민연금 확정 · NAVER 질의에 쓰므로 그 앞에
+            _run_stage(store, "kcw", lambda: stages.stage_kcw(store, quota, max_rows=args.max_rows)),
             _run_stage(store, "nps", lambda: stages.stage_nps(store, quota, use_api=not args.no_nps_api,
                                                                max_rows=args.max_rows)),
             _run_stage(store, "naver", lambda: stages.stage_naver(store, registry, quota,
@@ -304,7 +310,8 @@ def _progress_row(store: JobStore, quota: Quota, started: str, results) -> dict:
     elif any(r.status == "partial" for r in results):
         status = "partial"
     # 한 단계라도 '남은 처리'가 있는 행 수 (단계별 합이 아니라 행 기준 — 이전엔 합산해 전체 행보다 컸다)
-    deferred = store.count("nts_state='pending' OR ftc_state='pending' OR nps_state IN ('pending','api_pending') "
+    deferred = store.count("nts_state='pending' OR ftc_state='pending' OR kcw_state='pending' "
+                           "OR nps_state IN ('pending','api_pending') "
                            "OR naver_state IN ('pending','retry_pending') OR crawl_state IN ('pending','failed_tmp')")
     # 크롤링은 상주 워커가 하므로 실행 기록 대신 최근 24시간에 처리(점유)한 행으로 센다
     since = (now_kst() - timedelta(hours=24)).isoformat(timespec="seconds")
@@ -423,7 +430,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     print(f"잡 {args.job} — {n:,}행 · 시작 {store.meta('start_date') or '(미시작)'} · "
           f"{'일시정지' if store.meta('paused') == '1' else '실행 가능'}")
     print(f"\n{'단계':<10}상태별 행 수")
-    for col in ("nts_state", "ftc_state", "nps_state", "naver_state", "crawl_state"):
+    for col in ("nts_state", "ftc_state", "kcw_state", "nps_state", "naver_state", "crawl_state"):
         counts = store.conn.execute(f"SELECT {col} s, COUNT(*) c FROM rows GROUP BY {col} ORDER BY c DESC").fetchall()
         print(f"  {col[:-6]:<8}" + " · ".join(f"{r['s'] or '-'} {r['c']:,}" for r in counts))
     print("\n오늘 한도 (KST " + today_kst() + ")")

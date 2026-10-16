@@ -3,8 +3,9 @@
 같은 항목을 국세청·공정위·NAVER·홈페이지 크롤링 네 곳에서 얻으므로
 우선순위를 고정해 둔다. 순위는 실측 신선도에 따른다:
 
-- 상호명 : 공정위(공식 등록명) > NAVER(간판명) > 입력값
-- 주소   : 공정위 도로명 > NAVER 도로명 > NAVER 지번 > 공정위 지번
+- 상호명 : 공정위(공식 등록명) > 근로복지공단(보험 가입명) > NAVER(간판명) > 입력값
+- 주소   : 공정위 도로명 > 근로복지공단 > NAVER 도로명 > NAVER 지번 > 공정위 지번
+  (근로복지공단은 상호 없이 사업자번호만 받은 행에만 조회한다 — 10/16)
 - 전화   : 홈페이지 크롤링 > 공정위
 - 이메일 : 홈페이지 크롤링만 — 공정위 이메일은 대표자 개인 이메일이라 쓰지 않는다
 - 사이트 : 크롤링에 성공한 URL > 정제된 후보 URL
@@ -69,7 +70,9 @@ def naver_trusted(row: dict) -> bool:
         return False
     if naver_region(row) == "불일치":
         return False
-    if len(core(row.get("input_name") or "")) <= SHORT_NAME_LEN:
+    # 질의에 쓴 상호 기준 (입력 상호가 없으면 공정위 · 근로복지공단 상호로 검색했다)
+    name = row.get("input_name") or row.get("ftc_company_name") or row.get("kcw_name") or ""
+    if len(core(name)) <= SHORT_NAME_LEN:
         try:
             return float(row.get("naver_match_score") or 0) >= SHORT_MIN_SCORE
         except ValueError:
@@ -137,12 +140,13 @@ def address_complete(addr: str | None) -> bool:
 # (출력 필드, 후보 컬럼 우선순위, 출처 라벨)
 RULES: list[tuple[str, tuple[str, ...], dict[str, str]]] = [
     ("final_company_name",
-     ("ftc_company_name", "naver_title", "input_name"),
-     {"ftc_company_name": "공정위", "naver_title": "NAVER", "input_name": "입력"}),
+     ("ftc_company_name", "kcw_name", "naver_title", "input_name"),
+     {"ftc_company_name": "공정위", "kcw_name": "근로복지공단", "naver_title": "NAVER",
+      "input_name": "입력"}),
     ("final_address",
-     ("ftc_road_address", "naver_road_address", "crawl_address",
+     ("ftc_road_address", "kcw_address", "naver_road_address", "crawl_address",
       "naver_address", "ftc_lot_address", "nps_address"),
-     {"ftc_road_address": "공정위", "naver_road_address": "NAVER",
+     {"ftc_road_address": "공정위", "kcw_address": "근로복지공단", "naver_road_address": "NAVER",
       "crawl_address": "홈페이지", "naver_address": "NAVER",
       "ftc_lot_address": "공정위", "nps_address": "국민연금"}),
     ("final_phone",

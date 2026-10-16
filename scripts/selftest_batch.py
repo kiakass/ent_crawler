@@ -157,6 +157,39 @@ a, b = st2.select("1=1")
 check(f"조인 모드 ({jr.extra.get('mode')}) — 등록 사업자 적중 · 미등록은 미신고",
       jr.extra.get("mode") == "join" and a["ftc_found"] == "True" and b["ftc_error"] == "통신판매업 미신고")
 check("조인 결과에 대표자 필드 없음", "rprsv" not in json.dumps(reg.conn.execute("select fields from ftc_registry limit 1").fetchone()[0]))
+
+# 8) 근로복지공단 — 상호 없이 사업자번호만 받은 행 (10/16, 외부 호출 1회)
+from biz_crawler.kcomwel import pick_site
+items = [{"saeopjangNm": "가상(주) 현장A", "sangsiInwonCnt": "50", "seongripDt": "20200101"},
+         {"saeopjangNm": "가상(주)", "sangsiInwonCnt": "3", "seongripDt": "20100101"},
+         {"saeopjangNm": "가상(주)", "sangsiInwonCnt": "3", "seongripDt": "20100101"}]
+check("대표 사업장은 최다 이름 (상시인원보다 우선)", pick_site(items)["saeopjangNm"] == "가상(주)")
+j3 = "TEST_UNIT3"; shutil.rmtree(BATCH_ROOT / j3, ignore_errors=True)
+st3 = JobStore(j3)
+st3.import_rows([("1248100998", ""), ("1248100998", ""), ("1248100998", "가상상호")], source="unit")
+a, b, c = st3.select("1=1")
+check("상호 빈 행만 근로복지공단 대상 · 국민연금 · NAVER 는 대기",
+      a["kcw_state"] == "pending" and c["kcw_state"] == "skipped"
+      and a["nps_state"] == "pending" and a["naver_state"] == "pending")
+st3.update(1, {"ftc_state": "done"}); st3.update(2, {"ftc_state": "done", "ftc_company_name": "가상공정위상호"})
+# 근로복지공단 조회 전에는 이름 없는 행을 국민연금이 건너뛰지 않는다
+stages.stage_nps(st3, q, use_api=False)
+check("근로복지공단 대기 중이면 국민연금 skipped 로 확정하지 않음", st3.select("row_no=1")[0]["nps_state"] != "skipped")
+kr = stages.stage_kcw(st3, q)
+a, b = st3.select("row_no IN (1,2)")
+check(f"근로복지공단 상호 확보 · 공정위 상호 있으면 조회 안 함 (호출 {kr.calls}회)",
+      a["kcw_status"] == "matched" and a["kcw_name"] and len(a["kcw_zip"]) == 5
+      and b["kcw_state"] == "skipped" and kr.calls == 1)
+check("국민연금 · NAVER 상호에 근로복지공단 상호 사용",
+      stages._known_name(a) == a["kcw_name"] and stages._query_name(a) == a["kcw_name"])
+m = merge_row({"kcw_name": "근복상호", "kcw_address": "서울특별시 중구 세종대로 110", "kcw_zip": "04524"})
+check("병합: 근로복지공단 상호 · 주소", m["final_company_name"] == "근복상호" and "근로복지공단" in m["source"])
+m = merge_row({"ftc_company_name": "공정위상호", "kcw_name": "근복상호"})
+check("병합: 공정위 상호가 근로복지공단보다 먼저", m["final_company_name"] == "공정위상호")
+z = stages.resolve_zip({"final_address": "서울특별시 중구 세종대로 110", "kcw_address": "서울특별시 중구 세종대로 110",
+                        "kcw_zip": "04524"}, None, reg, None)
+check("최종 주소가 근로복지공단 주소면 그 우편번호 (API 호출 없음)", z["final_zipcode"] == "04524" and z["zip_source"] == "근로복지공단")
+st3.close()
 st.close(); st2.close(); reg.close()
-shutil.rmtree(BATCH_ROOT / job); shutil.rmtree(BATCH_ROOT / j2)
+shutil.rmtree(BATCH_ROOT / job); shutil.rmtree(BATCH_ROOT / j2); shutil.rmtree(BATCH_ROOT / j3)
 print(f"\n{sum(ok)}/{len(ok)} 통과")

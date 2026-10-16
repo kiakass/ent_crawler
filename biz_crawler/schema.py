@@ -27,6 +27,10 @@ NPS_FIELDS = ["nps_status", "nps_wkpl_name", "nps_code", "nps_industry",
               "nps_address",          # 사업장 도로명 주소(건물번호 없음) — NAVER 지역 키워드 · 지역 검증용 (10/08)
               "nps_zip"]              # 사업장 우편번호 — 도로명주소 조회 실패 시 보조
 
+# 근로복지공단 고용·산재 가입 사업장 — 상호 없이 사업자번호만 받은 행의 상호 · 주소 (biz_crawler/kcomwel.py, 10/16)
+KCW_FIELDS = ["kcw_status", "kcw_name", "kcw_address", "kcw_zip", "kcw_industry",
+              "kcw_sites", "kcw_error"]
+
 FINAL_FIELDS = ["final_company_name", "final_address", "final_phone",
                 "final_email", "final_homepage", "confidence_score",
                 "source", "status", "collected_at",
@@ -41,4 +45,4 @@ FINAL_FIELDS = ["final_company_name", "final_address", "final_phone",
                 "ksic_code", "ksic_name"]   # 표준산업분류 11차 세세분류 (국민연금 업종명 대조, 10/08)
 
 ALL_FIELDS = (BASE_FIELDS + NTS_FIELDS + FTC_FIELDS + NAVER_FIELDS
-              + CRAWL_FIELDS + NPS_FIELDS + FINAL_FIELDS)
+              + CRAWL_FIELDS + NPS_FIELDS + KCW_FIELDS + FINAL_FIELDS)

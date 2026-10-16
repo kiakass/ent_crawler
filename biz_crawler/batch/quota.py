@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import math
+import os
 
 from .store import Registry, today_kst
 
@@ -19,10 +20,20 @@ DAILY_LIMIT = {
     "naver": 25_000,      # NCP 지역검색 (문서)
     "ftc": 10_000,        # 공정위 통신판매 (x-ratelimit-limit 헤더)
     "nps": 10_000,        # 국민연금 사업장 (x-ratelimit-limit 헤더)
+    "kcw": 10_000,        # 근로복지공단 고용·산재 (x-ratelimit-limit 헤더, 10/16)
     "nts": 1_000_000,     # 국세청 상태조회 (문서)
     "juso": 200_000,      # 도로명주소 검색 (개발키 — 한도 미공개·헤더 없음, 보수적 자체 상한)
 }
 SAFETY = 0.95
+# 다른 키로 시험할 때(.env.test) 장부를 키별로 따로 센다: QUOTA_TAG_NAVER=test1016 → 'naver@test1016'.
+# 한도 자체(DAILY_LIMIT)는 같다 — 키마다 같은 상품이라서다.
+
+
+def ledger_name(api: str) -> str:
+    tag = os.getenv(f"QUOTA_TAG_{api.upper()}", "").strip()
+    return f"{api}@{tag}" if tag else api
+
+
 # 이만큼 연속으로 429 가 나면 그날 그 API 를 멈춘다 (장부와 실제 한도가 어긋난 것)
 STOP_AFTER_429 = 20
 
@@ -49,7 +60,7 @@ class Quota:
 
     def used(self, api: str, day: str | None = None) -> int:
         row = self._reg.conn.execute("SELECT calls FROM api_usage WHERE day=? AND api=?",
-                                     (day or today_kst(), api)).fetchone()
+                                     (day or today_kst(), ledger_name(api))).fetchone()
         return int(row["calls"]) if row else 0
 
     def remaining(self, api: str) -> int:
@@ -65,7 +76,7 @@ class Quota:
             "INSERT INTO api_usage(day, api, calls, e429, errors) VALUES(?, ?, ?, ?, ?) "
             "ON CONFLICT(day, api) DO UPDATE SET calls=calls+excluded.calls, "
             "e429=e429+excluded.e429, errors=errors+excluded.errors",
-            (today_kst(), api, max(0, calls), int(e429), int(error)))
+            (today_kst(), ledger_name(api), max(0, calls), int(e429), int(error)))
         if e429:
             self._streak_429[api] = self._streak_429.get(api, 0) + 1
             if self._streak_429[api] >= STOP_AFTER_429:
