@@ -482,9 +482,41 @@ def _region_hint(row: dict) -> str:
     return sigungu(known_address(row))
 
 
+class _NaverPool:
+    """NAVER 키 여러 개 — 앞 키의 예산을 다 쓰면 다음 키로. 장부는 키별 (naver · naver@2)."""
+
+    def __init__(self, quota: Quota, **kw) -> None:
+        from ..naver_local import NaverLocalClient, naver_keys
+
+        self._quota = quota
+        self._slots = [(api, NaverLocalClient(kid, key, **kw)) for api, kid, key in naver_keys()]
+
+    def __enter__(self) -> "_NaverPool":
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        for _, c in self._slots:
+            c.close()
+
+    def take(self, n: int):
+        """n 회를 쓸 수 있는 (장부 이름, 클라이언트). 모두 소진이면 None."""
+        return next(((api, c) for api, c in self._slots if self._quota.can(api, n)), None)
+
+    def remaining(self) -> int:
+        return sum(self._quota.remaining(api) for api, _ in self._slots)
+
+    def stop_reason(self) -> str:
+        return next((self._quota.stopped[api] for api, _ in self._slots if api in self._quota.stopped),
+                    f"NAVER 일 예산 소진 (키 {len(self._slots)}개)")
+
+    @property
+    def calls(self) -> int:
+        return sum(c.calls for _, c in self._slots)
+
+
 def stage_naver(store: JobStore, registry: Registry, quota: Quota, *, max_rows: int | None = None,
                 retry: bool = True, delay: float = 0.15, min_score: float = 0.60) -> StageResult:
-    from ..naver_local import NaverLocalClient, query_variants
+    from ..naver_local import query_variants
 
     res = StageResult("naver")
     # 휴·폐업으로 확인된 행은 대상에서 뺀다. 상태를 모르는 행은 기다리지 않고 진행.
@@ -498,13 +530,15 @@ def stage_naver(store: JobStore, registry: Registry, quota: Quota, *, max_rows: 
     stats = {"p1": 0, "retry": 0, "cache_hit": 0, "matched": 0, "improved": 0}
 
     naver_info = lambda: (f"매칭 {stats['matched']:,} · 캐시 {stats['cache_hit']:,} · "  # noqa: E731
-                          f"남은 예산 {quota.remaining('naver'):,}")
-    with NaverLocalClient(delay=delay, min_score=min_score) as client, \
+                          f"남은 예산 {pool.remaining():,}")
+    with _NaverPool(quota, delay=delay, min_score=min_score) as pool, \
             _Tx(store, "NAVER 1차", len(p1), naver_info, hold=False) as tx:
         for row in p1:
-            if not quota.can("naver", 2):
-                res.status, res.stop_reason = "partial", quota.stopped.get("naver", "NAVER 일 예산 소진")
+            slot = pool.take(2)
+            if slot is None:
+                res.status, res.stop_reason = "partial", pool.stop_reason()
                 break
+            api, client = slot
             name, region = _query_name(row), _region_hint(row)
             if not name:
                 # 공정위 · 근로복지공단이 끝났는데도 상호가 없으면 검색할 말이 없다. 대기 중이면 다음 실행에
@@ -521,7 +555,7 @@ def stage_naver(store: JobStore, registry: Registry, quota: Quota, *, max_rows: 
             else:
                 before = client.calls
                 r = client.resolve(name, region=region)
-                quota.record("naver", client.calls - before, e429="429" in r.error,
+                quota.record(api, client.calls - before, e429="429" in r.error,
                              error=r.status == "error")
                 out = r.to_row()
                 if r.status != "error":
@@ -540,13 +574,15 @@ def stage_naver(store: JobStore, registry: Registry, quota: Quota, *, max_rows: 
             retry_rows = store.select("naver_state='retry_pending'", order=order,
                                       limit=(max_rows - len(p1)) if max_rows else None)
             tx.phase("NAVER 재시도", len(retry_rows),
-                     lambda: f"개선 {stats['improved']:,} · 남은 예산 {quota.remaining('naver'):,}")
+                     lambda: f"개선 {stats['improved']:,} · 남은 예산 {pool.remaining():,}")
             for row in retry_rows:
                 name, region = _query_name(row), _region_hint(row)
                 need =max(1, len(query_variants(name, region)))
-                if not quota.can("naver", need):
-                    res.status, res.stop_reason = "partial", quota.stopped.get("naver", "NAVER 일 예산 소진")
+                slot = pool.take(need)
+                if slot is None:
+                    res.status, res.stop_reason = "partial", pool.stop_reason()
                     break
+                api, client = slot
                 key = f"hard|{name}|{region}"
                 cached = registry.cache_get(key)
                 if cached is not None:
@@ -555,7 +591,7 @@ def stage_naver(store: JobStore, registry: Registry, quota: Quota, *, max_rows: 
                 else:
                     before = client.calls
                     r = client.resolve_hard(name, region=region)
-                    quota.record("naver", client.calls - before, e429="429" in r.error,
+                    quota.record(api, client.calls - before, e429="429" in r.error,
                                  error=r.status == "error")
                     out = r.to_row()
                     if r.status != "error":
@@ -572,7 +608,7 @@ def stage_naver(store: JobStore, registry: Registry, quota: Quota, *, max_rows: 
                     store.update(row["row_no"], {"naver_state": "done"}, dirty=False)
                 stats["retry"] += 1
                 tx.tick()
-        res.calls = client.calls
+        res.calls = pool.calls
     res.rows_done = stats["p1"] + stats["retry"]
     res.extra.update(stats)
     return res

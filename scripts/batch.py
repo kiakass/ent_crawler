@@ -39,6 +39,7 @@ from biz_crawler.batch.store import (BATCH_ROOT, JobStore, Registry, now_kst,  #
                                      read_input, today_kst)
 from biz_crawler.config import PROJECT_ROOT  # noqa: E402
 from biz_crawler.logging_utils import RedactingFilter, install as install_logging  # noqa: E402
+from biz_crawler.naver_local import naver_keys  # noqa: E402
 
 load_dotenv(PROJECT_ROOT / ".env")
 log = logging.getLogger("batch")
@@ -151,11 +152,16 @@ def cmd_import(args: argparse.Namespace) -> int:
     return 0
 
 
+def _naver_budget() -> int:
+    """NAVER 하루 예산 — 키가 2개면 2배 (naver_local.naver_keys)."""
+    return math.floor(DAILY_LIMIT["naver"] * 0.95) * len(naver_keys())
+
+
 def _estimate(store: JobStore) -> dict:
     p1 = store.count("naver_state='pending'")
     rt = store.count("naver_state='retry_pending'")
     naver_calls = p1 * RATE["p1_cpr"] + (rt + p1 * RATE["retry_rate"]) * RATE["retry_cpr"]
-    budget = math.floor(DAILY_LIMIT["naver"] * 0.95)
+    budget = _naver_budget()
     days = math.ceil(naver_calls / budget) if naver_calls else 0
     return {"p1": p1, "rt": rt, "naver_calls": round(naver_calls), "days": days,
             "eta": (date.fromisoformat(today_kst()) + timedelta(days=max(days - 1, 0))).isoformat()}
@@ -178,7 +184,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
               f"= {math.ceil(kcw / math.floor(DAILY_LIMIT['kcw'] * 0.95))}일")
     print(f"  국민연금 대기 {nps:,}행 (파일 조인 우선)")
     print(f"  NAVER 1차 대기 {e['p1']:,}행 · 재시도 대기 {e['rt']:,}행 → 약 {e['naver_calls']:,}회 "
-          f"= {e['days']}일 (하루 {math.floor(DAILY_LIMIT['naver'] * 0.95):,}회)")
+          f"= {e['days']}일 (하루 {_naver_budget():,}회)")
     print(f"  크롤링 예상 약 {round(n * RATE['crawl_rate']):,}곳 · 순차 {n * RATE['crawl_rate'] * RATE['site_sec'] / 3600:.1f}시간 "
           f"(현재 대기·대상 미정 {crawl:,})")
     print(f"  예상 종료일 {e['eta']} (오늘 시작 기준)")
@@ -320,7 +326,7 @@ def _progress_row(store: JobStore, quota: Quota, started: str, results) -> dict:
         "day": f"D{_day_index(store)}", "date": day, "run_started": started,
         "run_ended": now_kst().isoformat(timespec="seconds"), "run_status": status,
         "stop_reason": " | ".join(reasons)[:300],
-        "naver_calls": quota.used("naver"),
+        "naver_calls": sum(quota.used(api) for api, _, _ in naver_keys()),
         "naver_p1_done": _sum_extra(runs_today, "naver", "p1"),
         "naver_retry_done": _sum_extra(runs_today, "naver", "retry"),
         "naver_p1_cum": p1_cum, "naver_retry_cum": retry_cum,
@@ -383,7 +389,7 @@ def _update_doc(store: JobStore, doc: Path) -> None:
     with path.open(encoding="utf-8-sig", newline="") as f:
         prog = {r["day"]: r for r in csv.DictReader(f)}
     today_day = _day_index(store)
-    budget = math.floor(DAILY_LIMIT["naver"] * 0.95)
+    budget = _naver_budget()
     lines = doc.read_text(encoding="utf-8").splitlines()
     start, end = _markers(store.job)
     inside = False
@@ -434,8 +440,8 @@ def cmd_status(args: argparse.Namespace) -> int:
         counts = store.conn.execute(f"SELECT {col} s, COUNT(*) c FROM rows GROUP BY {col} ORDER BY c DESC").fetchall()
         print(f"  {col[:-6]:<8}" + " · ".join(f"{r['s'] or '-'} {r['c']:,}" for r in counts))
     print("\n오늘 한도 (KST " + today_kst() + ")")
-    for api in DAILY_LIMIT:
-        print(f"  {api:<6} 사용 {quota.used(api):>7,} / 예산 {quota.daily_budget(api):>9,}")
+    for api in [*(k for k, _, _ in naver_keys()), *(a for a in DAILY_LIMIT if a != "naver")]:
+        print(f"  {api:<8} 사용 {quota.used(api):>7,} / 예산 {quota.daily_budget(api):>9,}")
     fills = [(k, store.count(f"{c}<>''")) for k, c in
              (("주소", "final_address"), ("사이트", "final_homepage"),
               ("전화", "final_phone"), ("이메일", "final_email"))]

@@ -98,6 +98,19 @@ def _is_retryable(exc: BaseException) -> bool:
     return False
 
 
+def naver_keys() -> list[tuple[str, str, str]]:
+    """NAVER 키 목록 — (한도 장부 이름, KEY_ID, KEY). 키1 은 'naver', 키2 는 'naver@2'.
+
+    키2(NCP_APIGW_KEY_ID_2 · NCP_APIGW_KEY_2)는 선택이다. 장부를 키별로 따로 세고
+    배치는 키1 예산을 다 쓰면 키2 로 넘어간다 (10/16).
+    """
+    keys = [("naver", os.getenv("NCP_APIGW_KEY_ID", "").strip(), os.getenv("NCP_APIGW_KEY", "").strip())]
+    kid2, key2 = os.getenv("NCP_APIGW_KEY_ID_2", "").strip(), os.getenv("NCP_APIGW_KEY_2", "").strip()
+    if kid2 and key2:
+        keys.append(("naver@2", kid2, key2))
+    return keys
+
+
 class NaverLocalClient:
     def __init__(
         self,

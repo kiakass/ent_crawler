@@ -92,6 +92,7 @@ export SSL_CERT_FILE=$PWD/certs/ca-bundle.pem
 | | ③ 국민연금공단_국민연금 가입 사업장 내역 (V2) | 국민연금 1만 |
 | | ④ (선택) 근로복지공단_고용·산재보험 가입현황 정보 — 상호 없이 사업자번호만 있는 목록용 | 근로복지공단 1만 |
 | `NCP_APIGW_KEY_ID` · `NCP_APIGW_KEY` | [console.ncloud.com](https://console.ncloud.com) → Services → Application Service → NAVER API HUB 이용 신청 → Application 등록 → 인증 정보 팝업의 Client ID · Client Secret | NAVER 2.5만 · 월 77.5만 |
+| `NCP_APIGW_KEY_ID_2` · `NCP_APIGW_KEY_2` | (선택) 같은 절차로 Application 을 하나 더 등록한 키 | 키1 예산을 다 쓰면 배치가 키2 로 넘어간다 — 하루 예산 2배. 장부는 `naver@2` 로 따로 센다 |
 | `JUSO_CONFM_KEY` | [business.juso.go.kr](https://business.juso.go.kr) → 도로명주소 검색 API 신청 → 승인키 | 우편번호 (개발키는 만료일이 있다 — 장기 운영은 운영키 신청) |
 | `CRAWLER_CONTACT` | 운영 공용 메일 주소 (개인 메일 X) | 크롤링 요청의 `From` 헤더 — 사이트 운영자가 연락할 창구 |
 | `CA_BUNDLE` | (선택) 비워둔다 | 비워두면 `certs/ca-bundle.pem` → certifi 순 |
@@ -209,8 +210,7 @@ python scripts/batch.py daily  --job SME1101 --with-crawl                    # �
 | 8 | `export` 내보내기 | `snapshot.csv` · `delta_YYYYMMDD.csv` · 실적 1행 |
 
 한 단계가 오류나 한도로 멈춰도 다음 단계는 돈다. 같은 날 여러 번 돌려도 한도 장부를 공유하므로 한도를 넘지 않는다.
-다른 키로 시험할 때는 `.env.test`(커밋 제외)에 키와 `QUOTA_TAG_NAVER=이름` 을 두고 `set -a; source .env.test; set +a` 뒤 실행한다 —
-그 키의 사용량은 `naver@이름` 으로 따로 센다.
+NAVER 키2 가 있으면 키1 예산(95%)을 다 쓴 뒤 키2 로 이어서 돈다 (`status` 에 `naver` · `naver@2` 가 따로 보인다).
 상태가 `partial` 이면 **하루 한도를 다 써서 정상적으로 멈춘 것**이다.
 
 ---

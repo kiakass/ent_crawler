@@ -190,6 +190,19 @@ z = stages.resolve_zip({"final_address": "서울특별시 중구 세종대로 11
                         "kcw_zip": "04524"}, None, reg, None)
 check("최종 주소가 근로복지공단 주소면 그 우편번호 (API 호출 없음)", z["final_zipcode"] == "04524" and z["zip_source"] == "근로복지공단")
 st3.close()
+
+# 9) NAVER 키 2개 — 키1 예산이 0 이면 키2 로 (호출 없음, 가짜 키)
+import os
+_env = {k: os.environ.get(k) for k in ("NCP_APIGW_KEY_ID_2", "NCP_APIGW_KEY_2")}
+os.environ.update({"NCP_APIGW_KEY_ID_2": "dummy-id", "NCP_APIGW_KEY_2": "dummy-key"})
+with stages._NaverPool(Quota(reg, caps={"naver": 0})) as pool:
+    slot = pool.take(2)
+    check("키1 예산 소진 시 키2 장부(naver@2)로 넘어감", slot is not None and slot[0] == "naver@2")
+with stages._NaverPool(Quota(reg, caps={"naver": 0, "naver@2": 0})) as pool:
+    check("두 키 모두 소진이면 정지", pool.take(2) is None and "키 2개" in pool.stop_reason())
+for k, v in _env.items():
+    if v is None: os.environ.pop(k, None)
+    else: os.environ[k] = v
 st.close(); st2.close(); reg.close()
 shutil.rmtree(BATCH_ROOT / job); shutil.rmtree(BATCH_ROOT / j2); shutil.rmtree(BATCH_ROOT / j3)
 print(f"\n{sum(ok)}/{len(ok)} 통과")

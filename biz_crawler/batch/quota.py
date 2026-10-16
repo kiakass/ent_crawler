@@ -30,6 +30,8 @@ SAFETY = 0.95
 
 
 def ledger_name(api: str) -> str:
+    if "@" in api:                     # 이미 키를 지정한 장부 (예: NAVER 키2 'naver@2')
+        return api
     tag = os.getenv(f"QUOTA_TAG_{api.upper()}", "").strip()
     return f"{api}@{tag}" if tag else api
 
@@ -54,7 +56,7 @@ class Quota:
         self.stopped: dict[str, str] = {}
 
     def daily_budget(self, api: str) -> int:
-        base = math.floor(DAILY_LIMIT[api] * self._safety)
+        base = math.floor(DAILY_LIMIT[api.split("@")[0]] * self._safety)
         cap = self._caps.get(api)
         return min(base, cap) if cap is not None else base
 
