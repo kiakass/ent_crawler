@@ -111,6 +111,7 @@ export SSL_CERT_FILE=$PWD/certs/ca-bundle.pem
 | `design/업종분류.md` | **필수** | 병합 단계가 파일 없음으로 실패 | **저장소에 포함돼 있다** — 사내 업종분류표 (CSV 형식: `업종대,업종중,업종소`). 분류를 바꿀 때만 고친다 |
 | `data/external/nps/*.csv` | 권장 | 국민연금 업종을 API 로만 채워 하루 약 4,700행밖에 못 함 | data.go.kr 파일데이터 **15083277** "국민연금공단_국민연금 가입 사업장 내역" 월별 CSV(cp949) 를 받아 그대로 둔다. 여러 개면 이름순 마지막 파일을 쓴다 |
 | `data/external/ksic/ksic11_세세분류.csv` · `ksic10_세세분류.csv` | 선택 | 표준산업분류 코드 칸이 비어 있음 (다른 항목은 정상) | 통계청 "한국표준산업분류 제11차 개정 분류체계(대-중-소-세-세세 구분)" xlsx 를 받아 `python scripts/extract_ksic.py <xlsx 경로>` |
+| `data/external/ksic/naver_ksic.csv` | 선택 | 표준산업분류를 국민연금 업종으로만 채움 (NAVER 카테고리 보충 없음) | 국민연금 매칭이 쌓인 잡에서 `python scripts/build_naver_ksic.py --job <잡>` — 상위 100 카테고리는 `naver_ksic_review_top100.csv` 의 `확정코드` 로 고칠 수 있다 |
 
 공정위 데이터는 따로 받을 필요 없다. 목록이 3,000건을 넘으면 배치가 처음 돌 때 전체(약 277페이지)를 받아 로컬에 쌓는다.
 
@@ -312,7 +313,7 @@ python scripts/batch.py status --job SME1101
 
 ```text
 사업자번호 · 상호명 · 이메일 · 전화 · 주소 · 우편번호 · 사이트주소 · 업종대 · 업종중 · 업종소
-· 표준산업분류코드 · 표준산업분류명 · 업종분류근거 · NAVER업종_대/중/소 · 국민연금업종코드 · 국민연금업종명
+· 표준산업분류코드 · 표준산업분류명 · 표준산업분류근거(국민연금/NAVER보정/NAVER추정) · 업종분류근거 · NAVER업종_대/중/소 · 국민연금업종코드 · 국민연금업종명
 · 사업자상태(계속/휴업/폐업) · 폐업일자 · NAVER지역검증 · 사이트비고 · 우편번호출처 · 주소비고
 ```
 
@@ -370,6 +371,7 @@ python scripts/batch.py status --job SME1101
 | `scripts/export_result.py [--only-collected]` | `pipeline.py` 결과를 납품 컬럼 순서로 → `output/수집결과_YYYYMMDDHH24MI.csv` |
 | `scripts/export_links.py` | 확보된 홈페이지 URL 목록 |
 | `scripts/extract_ksic.py <xlsx>` | 표준산업분류 기준표 생성 (3절) |
+| `scripts/build_naver_ksic.py --job <잡>` | NAVER 카테고리 → 표준산업분류 대응표 생성 (3절) |
 | `scripts/setup_ca.py [--ca-name 이름]` | 사내 CA 묶음 생성 (1절) |
 
 ---

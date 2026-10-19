@@ -140,6 +140,25 @@ check("병합 결과에 표준산업분류코드", m["ksic_code"] == "58222")
 m = merge_row({"input_name": "가상상호긴이름", "nps_status": "matched", "nps_code": "999999", "nps_industry": "BIZ_NO미존재사업장"})
 check("업종 아닌 국민연금 값은 코드 없음", m["ksic_code"] == "")
 
+# 6h) NAVER 카테고리 → KSIC 대응표 (10/19, KSIC 명칭 기준) — 실제 파일 대신 가상 대응표
+import biz_crawler.ksic as ksic_mod
+_saved_map = ksic_mod._naver_map
+ksic_mod._naver_map = lambda: {"교육,학문>어린이집": ("87210", "보육시설 운영업")}
+nav = {"input_name": "가상상호긴이름", "naver_status": "matched", "naver_match_score": "0.9",
+       "naver_category": "교육,학문>어린이집"}
+m = merge_row(nav)
+check("국민연금 없으면 NAVER 추정", (m["ksic_code"], m["ksic_basis"]) == ("87210", "NAVER추정"))
+m = merge_row({**nav, "nps_status": "matched", "nps_code": "930900", "nps_industry": "그 외 기타 달리 분류되지 않은 개인 서비스업"})
+check("국민연금이 포괄 코드면 NAVER 보정", (m["ksic_code"], m["ksic_basis"]) == ("87210", "NAVER보정"))
+m = merge_row({**nav, "nps_status": "matched", "nps_code": "722000", "nps_industry": "응용 소프트웨어 개발 및 공급업"})
+check("국민연금이 구체 코드면 그대로", (m["ksic_code"], m["ksic_basis"]) == ("58222", "국민연금"))
+m = merge_row({**nav, "naver_status": "low_score"})
+check("믿지 못할 NAVER 업소는 대응표 안 씀", m["ksic_code"] == "" and m["ksic_basis"] == "")
+ksic_mod._naver_map = lambda: {"건설업>전문건설업": ("42", "전문직별 공사업")}
+m = merge_row({**nav, "naver_category": "건설업>전문건설업", "nps_status": "matched", "nps_code": "452000", "nps_industry": "그 외 기타 건축 마무리 공사업"})
+check("NAVER 대응이 더 거칠면 보정 안 함", (m["ksic_code"], m["ksic_basis"]) == ("42499", "국민연금"))
+ksic_mod._naver_map = _saved_map
+
 # 7) 공정위 다운로드 1페이지 (임시 레지스트리) → 조인
 for f in S.glob("tmp_registry.db*"): f.unlink()
 reg = Registry(S / "tmp_registry.db"); q = Quota(reg)

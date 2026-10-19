@@ -32,7 +32,7 @@ MASTER = PROJECT_ROOT / "data" / "master.csv"
 OUT_DIR = PROJECT_ROOT / "output"
 
 HEADER = ["사업자번호", "상호명", "이메일", "전화", "주소", "우편번호", "사이트주소",
-          "업종대", "업종중", "업종소", "표준산업분류코드", "표준산업분류명", "업종분류근거",
+          "업종대", "업종중", "업종소", "표준산업분류코드", "표준산업분류명", "표준산업분류근거", "업종분류근거",
           "NAVER업종_대", "NAVER업종_중", "NAVER업종_소",
           "국민연금업종코드", "국민연금업종명",
           "사업자상태", "폐업일자", "NAVER지역검증", "사이트비고", "우편번호출처", "주소비고"]
@@ -51,6 +51,7 @@ MAP = {
     "업종소": "ind_small",
     "표준산업분류코드": "ksic_code",
     "표준산업분류명": "ksic_name",
+    "표준산업분류근거": "ksic_basis",
     "업종분류근거": "ind_basis",
     "NAVER업종_대": "ind_naver_l1",
     "NAVER업종_중": "ind_naver_l2",
@@ -101,7 +102,7 @@ def main() -> int:
 
     n = len(rows)
     print(f"내보냄: {args.out.relative_to(PROJECT_ROOT)}  —  {n}건\n")
-    for h in (h for h in HEADER[1:] if h not in ("업종분류근거", "NAVER지역검증", "사이트비고", "폐업일자", "우편번호출처", "주소비고", "표준산업분류명")):
+    for h in (h for h in HEADER[1:] if h not in ("업종분류근거", "NAVER지역검증", "사이트비고", "폐업일자", "우편번호출처", "주소비고", "표준산업분류명", "표준산업분류근거")):
         v = sum(1 for r in rows if (r.get(MAP[h]) or "").strip())
         print(f"  {h:6} {v:4}/{n}  ({v / n * 100:5.1f}%)" if n else f"  {h}: -")
     return 0
