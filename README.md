@@ -302,7 +302,7 @@ python scripts/batch.py status --job SME1101
 | 위치 | 내용 |
 | --- | --- |
 | `output/batch/<잡>/snapshot.csv` | **전체 행 누적 결과** (daily 마다 갱신 · 납품 컬럼 순서) |
-| `output/batch/<잡>/delta_YYYYMMDD.csv` | 그날 값이 바뀐 행만 |
+| `output/batch/<잡>/delta_YYYYMMDD.csv` | 직전 날 마지막 내보내기 이후 바뀐 행 (상주 크롤러가 내보내기 뒤 바꾼 행도 다음 날 delta 에 들어간다 · 같은 날 다시 내보내도 기준 유지) |
 | `output/batch/<잡>/daily_progress.csv` | 하루 1행 실적 — 집계값만 (호출 수 · 누적 처리 · 채움 수 · 예상 종료일) |
 | `logs/batch/YYYYMMDD.log` | 그날 실행 로그 (API 키는 마스킹) |
 | `logs/batch/kr.lguplus.bizcrawler.<잡>.{daily,crawl}.err.log` | launchd 실행 로그 |
