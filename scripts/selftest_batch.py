@@ -135,6 +135,9 @@ check("국민연금 주소면 국민연금 우편번호 (API 호출 없음)", zr
 from biz_crawler.ksic import lookup as ksic_lookup
 check("KSIC 11차 정확 일치", ksic_lookup("커피 전문점") == ("56221", "커피 전문점"))
 check("'/' 로 묶인 업종명은 앞쪽부터", ksic_lookup("통관 대리 및 관련서비스업 / 화물 운송 중개  대리")[0] == "52991")
+check("괄호 부기 뗀 이름으로", ksic_lookup("비주거용 건물 임대업(점포  자기땅)")[0] == "68112"
+      and ksic_lookup("그 외 기타 분류 안된 사업 지원 서비스업(기타임가공")[0] == "75999")
+check("세분류 이름이면 4자리", ksic_lookup("주거용 건물 건설업") == ("4111", "주거용 건물 건설업"))
 m = merge_row({"input_name": "가상상호긴이름", "nps_status": "matched", "nps_code": "722000", "nps_industry": "응용 소프트웨어 개발 및 공급업"})
 check("병합 결과에 표준산업분류코드", m["ksic_code"] == "58222")
 m = merge_row({"input_name": "가상상호긴이름", "nps_status": "matched", "nps_code": "999999", "nps_industry": "BIZ_NO미존재사업장"})

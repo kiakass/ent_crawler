@@ -10,6 +10,9 @@
   1. 11차 세세분류명 정확 일치 (공백 · 가운뎃점 · 쉼표 · 괄호 무시)
   2. '통관 대리 … / 화물 운송 …' 처럼 '/' 로 묶인 업종명은 앞쪽부터 차례로
   3. 10차 세세분류명 일치 → 같은 코드가 11차에도 있을 때만 (개정으로 코드가 바뀐 업종은 붙이지 않는다)
+  4. 11차 세분류명 일치 → 4자리 코드 ('주거용 건물 건설업' 처럼 국민연금이 세분류 이름을 쓰는 업종)
+  각 단계는 원래 이름 다음에 괄호 부기를 뗀 이름으로도 맞춘다 — '비주거용 건물 임대업(점포  자기땅)' ·
+  '건축 설계 및 관련 서비스업(건축사)' · 닫는 괄호가 잘린 '…(기타임가공' (10/20, 미분류 1,160건 중 699건)
 
 국민연금 업종이 없거나 포괄 코드면 NAVER 카테고리 대응표로 보충한다 (10/19, 아래 classify).
 """
@@ -26,6 +29,7 @@ KSIC_DIR = PROJECT_ROOT / "data" / "external" / "ksic"
 RESULT_FIELDS = ["ksic_code", "ksic_name", "ksic_basis"]
 
 _NORM = re.compile(r"[\s·ㆍ,()]")
+_PAREN = re.compile(r"\([^)]*\)?")      # 괄호 부기 — 닫는 괄호가 잘린 것까지
 
 
 def _norm(name: str | None) -> str:
@@ -42,25 +46,41 @@ def _table(version: int) -> dict[str, tuple[str, str]]:
         return {_norm(r["세세분류명"]): (r["세세분류코드"], r["세세분류명"]) for r in csv.DictReader(f)}
 
 
+@lru_cache(maxsize=1)
+def _table_4() -> dict[str, tuple[str, str]]:
+    """11차 정규화 세분류명 → (4자리 코드, 명칭)."""
+    path = KSIC_DIR / "ksic11_세세분류.csv"
+    if not path.exists():
+        return {}
+    with path.open(encoding="utf-8-sig", newline="") as f:
+        return {_norm(r["세분류명"]): (r["세분류코드"], r["세분류명"]) for r in csv.DictReader(f)}
+
+
 @lru_cache(maxsize=2)
 def _codes(version: int) -> dict[str, str]:
     return {code: name for code, name in _table(version).values()}
 
 
 def lookup(industry: str | None) -> tuple[str, str]:
-    """국민연금 업종명 → (11차 세세분류 코드, 명칭). 못 찾으면 ('', '')."""
+    """국민연금 업종명 → (11차 세세분류 코드, 명칭). 세분류로만 맞으면 4자리. 못 찾으면 ('', '')."""
     if not industry:
         return "", ""
-    k11, k10, c11 = _table(11), _table(10), _codes(11)
+    k11, k10, k4, c11 = _table(11), _table(10), _table_4(), _codes(11)
     parts = [p for p in (industry.split("/")) if p.strip()]
-    for part in parts:                       # 1·2
-        hit = k11.get(_norm(part))
+    keys = [_norm(p) for p in parts]
+    keys += [k for k in (_norm(_PAREN.sub("", p)) for p in parts) if k and k not in keys]
+    for key in keys:                         # 1·2
+        hit = k11.get(key)
         if hit:
             return hit
-    for part in parts:                       # 3
-        hit = k10.get(_norm(part))
+    for key in keys:                         # 3
+        hit = k10.get(key)
         if hit and hit[0] in c11:
             return hit[0], c11[hit[0]]
+    for key in keys:                         # 4
+        hit = k4.get(key)
+        if hit:
+            return hit
     return "", ""
 
 
