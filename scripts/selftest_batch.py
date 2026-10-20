@@ -225,6 +225,26 @@ with stages._NaverPool(Quota(reg, caps={"naver": 0, "naver@2": 0})) as pool:
 for k, v in _env.items():
     if v is None: os.environ.pop(k, None)
     else: os.environ[k] = v
+
+# 10) delta — 직전 날 마지막 내보내기 이후 바뀐 행 (10/20, 내보내기 뒤 같은 날 바뀐 행 누락 수정)
+from datetime import date, timedelta
+from biz_crawler.batch.store import today_kst
+j4 = "TEST_UNIT4"; shutil.rmtree(BATCH_ROOT / j4, ignore_errors=True)
+st4 = JobStore(j4); st4.import_rows([("1248100998", "가상1"), ("2208162517", "가상2")], source="unit")
+day = today_kst(); yday = (date.fromisoformat(day) - timedelta(days=1)).isoformat()
+st4.conn.execute("UPDATE rows SET updated_at=? WHERE row_no=1", (f"{yday}T01:00:00+09:00",))
+st4.conn.execute("UPDATE rows SET updated_at=? WHERE row_no=2", (f"{yday}T14:00:00+09:00",))
+st4.conn.execute("INSERT INTO runs(day, stage, started_at) VALUES(?, 'export', ?)", (yday, f"{yday}T02:00:00+09:00"))
+out4 = BATCH_ROOT / j4 / "out"
+er = stages.stage_export(st4, out4)
+check("어제 내보내기 뒤 바뀐 행은 오늘 delta 에 (meta 없으면 runs 기준)",
+      er.extra[f"delta_{day.replace('-', '')}.csv"] == 1 and er.extra["delta_since"] == f"{yday}T02:00:00+09:00")
+er = stages.stage_export(st4, out4)
+check("같은 날 다시 내보내도 그날 첫 기준 유지",
+      er.extra[f"delta_{day.replace('-', '')}.csv"] == 1 and st4.meta("delta_since") == f"{yday}T02:00:00+09:00"
+      and st4.meta("last_export_at").startswith(day))
+st4.close()
+
 st.close(); st2.close(); reg.close()
-shutil.rmtree(BATCH_ROOT / job); shutil.rmtree(BATCH_ROOT / j2); shutil.rmtree(BATCH_ROOT / j3)
+shutil.rmtree(BATCH_ROOT / job); shutil.rmtree(BATCH_ROOT / j2); shutil.rmtree(BATCH_ROOT / j3); shutil.rmtree(BATCH_ROOT / j4)
 print(f"\n{sum(ok)}/{len(ok)} 통과")

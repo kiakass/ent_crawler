@@ -799,16 +799,34 @@ def stage_zip(store: JobStore, registry: Registry, quota: Quota) -> StageResult:
 
 # ── 06 Export ─────────────────────────────────────────────
 
+def delta_since(store: JobStore, day: str) -> str:
+    """오늘 delta 의 시작 시각 — 직전 날의 마지막 내보내기 시각.
+
+    10/20 수정: 전에는 updated_at 날짜 = 오늘인 행만 담아, 상주 크롤러가 내보내기 뒤 같은 날 바꾼 행은
+    어느 delta 에도 없었다 (10/09~19 전화 1,810 · 이메일 1,060). 같은 날 다시 내보내면 그날 첫 기준을 그대로 쓴다.
+    meta 가 없으면(수정 전 잡) runs 의 마지막 export 시작 시각, 그것도 없으면 오늘 0시.
+    """
+    if store.meta("delta_day") == day:
+        return store.meta("delta_since")
+    if store.meta("last_export_at"):
+        return store.meta("last_export_at")
+    row = store.conn.execute("SELECT started_at FROM runs WHERE stage='export' AND day<? "
+                             "ORDER BY id DESC LIMIT 1", (day,)).fetchone()
+    return row[0] if row else f"{day}T00:00:00"
+
+
 def stage_export(store: JobStore, out_dir: Path) -> StageResult:
-    """누적 스냅샷(snapshot.csv) + 오늘 바뀐 행(delta_YYYYMMDD.csv)."""
+    """누적 스냅샷(snapshot.csv) + 직전 날 마지막 내보내기 이후 바뀐 행(delta_YYYYMMDD.csv)."""
     from scripts.export_result import HEADER, MAP
 
     res = StageResult("export")
     out_dir.mkdir(parents=True, exist_ok=True)
     day = today_kst()
+    stamp = now_kst().isoformat(timespec="seconds")     # 읽기 전 시각 — 내보내는 중 바뀐 행은 다음 delta 에도 들어간다
+    since = delta_since(store, day)
     targets = {
         out_dir / "snapshot.csv": store.select("1=1"),
-        out_dir / f"delta_{day.replace('-', '')}.csv": store.select("substr(updated_at,1,10)=?", (day,)),
+        out_dir / f"delta_{day.replace('-', '')}.csv": store.select("updated_at>=?", (since,)),
     }
     for path, rows in targets.items():
         tmp = path.with_suffix(".csv.tmp")
@@ -819,5 +837,9 @@ def stage_export(store: JobStore, out_dir: Path) -> StageResult:
                 w.writerow([(r.get(MAP[h]) or "").strip() for h in HEADER])
         tmp.replace(path)
         res.extra[path.name] = len(rows)
+    store.set_meta("delta_day", day)
+    store.set_meta("delta_since", since)
+    store.set_meta("last_export_at", stamp)
+    res.extra["delta_since"] = since
     res.rows_done = len(targets[out_dir / "snapshot.csv"])
     return res
