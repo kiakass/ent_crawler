@@ -10,7 +10,8 @@ NAVER category 는 '음식점>카페,디저트>카페' 처럼 '>' 로 단계를 
 
 분류 근거 (ind_basis) — 위에서부터 처음 성공한 것:
   - 국민연금업종  : 국민연금 사업장 업종명(KSIC 8차 기반). 업종명 키워드로
-                    먼저 보고, 안 맞으면 코드 앞 2자리(중분류) 기본값
+                    먼저 보고, 안 맞으면 코드 앞 2자리(중분류) 기본값.
+                    업종 명사만 같은 유사 상호 매칭이면 '국민연금업종(유사상호)' (10/22)
   - NAVER카테고리 : 상호명이 매칭된(matched) 업소의 카테고리
   - 상호명키워드  : 위 둘이 없거나('서비스,산업>기업' 처럼) 업종을 알 수
                     없을 때 상호명의 명확한 단어로
@@ -377,9 +378,9 @@ def _by_category(category: str) -> str | None:
 
 def _by_nps(row: dict) -> str | None:
     """국민연금 업종명 키워드 → 코드 앞 2자리 기본값 순."""
-    from .nps_bplc import NO_INDUSTRY_PREFIX
+    from .nps_bplc import NO_INDUSTRY_PREFIX, NPS_USABLE
 
-    if row.get("nps_status") != "matched":
+    if row.get("nps_status") not in NPS_USABLE:     # 업종만 매칭(industry_only)도 업종은 쓴다
         return None
     code = (row.get("nps_code") or "").strip()
     if not code or code.startswith(NO_INDUSTRY_PREFIX):
@@ -409,7 +410,8 @@ def classify(row: dict) -> dict[str, str]:
     l1, l2, l3 = split_category(category)
     out = {"ind_naver_l1": l1, "ind_naver_l2": l2, "ind_naver_l3": l3}
 
-    small, basis = _by_nps(row), "국민연금업종"
+    small = _by_nps(row)
+    basis = "국민연금업종(유사상호)" if row.get("nps_status") == "industry_only" else "국민연금업종"
     if small is None and category:
         small, basis = _by_category(category), "NAVER카테고리"
     if small is None:

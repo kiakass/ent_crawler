@@ -43,7 +43,7 @@ FINAL_FIELDS = ["final_company_name", "final_address", "final_phone",
                 "final_zipcode", "zip_source", "zip_addr",
                 "address_note",       # 주소비고: 건물번호 없음 · 국민연금 주소 (10/08)
                 "ksic_code", "ksic_name",   # 표준산업분류 11차 세세분류 (국민연금 업종명 대조, 10/08)
-                "ksic_basis"]              # 표준산업분류근거: 국민연금 · NAVER보정 · NAVER추정 (10/19)
+                "ksic_basis"]              # 표준산업분류근거: 국민연금 · 국민연금(유사상호) · NAVER보정 · NAVER추정
 
 ALL_FIELDS = (BASE_FIELDS + NTS_FIELDS + FTC_FIELDS + NAVER_FIELDS
               + CRAWL_FIELDS + NPS_FIELDS + KCW_FIELDS + FINAL_FIELDS)

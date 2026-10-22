@@ -86,10 +86,10 @@ def lookup(industry: str | None) -> tuple[str, str]:
 
 def classify_nps(row: dict) -> dict[str, str]:
     """국민연금 업종이 쓸 수 있는 값일 때만 KSIC 코드를 붙인다."""
-    from .nps_bplc import NO_INDUSTRY_PREFIX
+    from .nps_bplc import NO_INDUSTRY_PREFIX, NPS_USABLE
 
     code = (row.get("nps_code") or "").strip()
-    if row.get("nps_status") != "matched" or not code or code.startswith(NO_INDUSTRY_PREFIX):
+    if row.get("nps_status") not in NPS_USABLE or not code or code.startswith(NO_INDUSTRY_PREFIX):
         return {"ksic_code": "", "ksic_name": ""}
     k, n = lookup(row.get("nps_industry"))
     return {"ksic_code": k, "ksic_name": n}
@@ -132,7 +132,9 @@ def classify(row: dict) -> dict[str, str]:
     if k and len(nk) == 5 and nk != k and CATCH_ALL.search(n) and not CATCH_ALL.search(nn):
         return {"ksic_code": nk, "ksic_name": nn, "ksic_basis": "NAVER보정"}
     if k:
-        return {"ksic_code": k, "ksic_name": n, "ksic_basis": "국민연금"}
+        # 업종 명사만 같은 다른 사업장일 수 있는 매칭은 근거를 따로 표시한다 (10/22)
+        basis = "국민연금(유사상호)" if row.get("nps_status") == "industry_only" else "국민연금"
+        return {"ksic_code": k, "ksic_name": n, "ksic_basis": basis}
     if nk:
         return {"ksic_code": nk, "ksic_name": nn, "ksic_basis": "NAVER추정"}
     return {"ksic_code": "", "ksic_name": "", "ksic_basis": ""}
