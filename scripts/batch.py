@@ -7,12 +7,14 @@
     python scripts/batch.py crawl-worker --job J [--once]      상주 크롤러 (launchd KeepAlive)
     python scripts/batch.py status --job J [--update-doc]      진행률 · 오늘 한도 · 실적 문서 갱신
     python scripts/batch.py export --job J                     스냅샷 · 오늘 델타
+    python scripts/batch.py report --job J [--date D]          일별실행결과_YYYYMMDD.md (daily 끝에 자동)
     python scripts/batch.py pause|resume --job J
     python scripts/batch.py ftc-dump [--max-pages N]           공정위 전체 다운로드 (이어받기)
 
 단계는 서로 독립이다. 한 단계가 한도·장애로 멈춰도 다음 단계는 돈다.
 일별 실적은 output/batch/<job>/daily_progress.csv 에 하루 1행 기록하고(집계값만),
 작업계획서(design/작업계획서.md) §1.5 표의 실적 칸을 갱신한다.
+daily 끝에 같은 폴더에 일별실행결과_YYYYMMDD.md(집계값만)도 만든다.
 """
 
 from __future__ import annotations
@@ -227,6 +229,10 @@ def cmd_daily(args: argparse.Namespace) -> int:
         results.append(_run_stage(store, "export", lambda: stages.stage_export(store, OUT_ROOT / args.job)))
 
         _write_progress(store, quota, started, results)
+        try:  # 보고서가 실패해도 배치 결과(종료 코드)는 그대로
+            _write_report(store)
+        except Exception:
+            log.exception("일별 실행 결과 작성 실패")
         doc = _doc_path(args.job)
         if doc:
             _update_doc(store, doc)
@@ -426,6 +432,127 @@ def _update_doc(store: JobStore, doc: Path) -> None:
     log.info("실적 문서 갱신: %s", doc.name)
 
 
+REPORT_MARK = "<!-- auto: batch.py report -->"
+STAGE_NAMES = {"nts": "국세청", "ftc": "공정위", "kcw": "근로복지공단", "nps": "국민연금", "naver": "NAVER",
+               "crawl": "크롤링", "merge": "병합", "zip": "우편번호", "export": "내보내기"}
+STATE_NAMES = {"done": "완료", "pending": "대기", "api_pending": "API 대기", "retry_pending": "재시도 대기",
+               "waiting": "URL 없음", "failed": "실패", "failed_tmp": "재시도 대기", "skipped": "제외",
+               "running": "처리 중", "": "-"}
+
+
+def _minutes(a: str | None, b: str | None) -> str:
+    from datetime import datetime
+    if not a or not b:
+        return "—"
+    return f"{(datetime.fromisoformat(b) - datetime.fromisoformat(a)).total_seconds() / 60:.0f}분"
+
+
+def _log_count(job: str, day: str, needle: str) -> int | None:
+    """그날 상주 크롤러 err 로그에서 needle 이 든 줄 수 (로그 줄 머리 'YYYYMMDDhhmmss')."""
+    path = PROJECT_ROOT / "logs" / "batch" / f"kr.lguplus.bizcrawler.{job}.crawl.err.log"
+    if not path.exists():
+        return None
+    prefix = day.replace("-", "")
+    with path.open(encoding="utf-8", errors="replace") as f:
+        return sum(1 for line in f if line.startswith(prefix) and needle in line)
+
+
+def _write_report(store: JobStore, day: str | None = None) -> Path | None:
+    """output/batch/<잡>/일별실행결과_YYYYMMDD.md — 그날 실행 · 단계 · 채움 · 진행 상태 (집계값만).
+
+    손으로 쓴 같은 이름 파일(REPORT_MARK 없음)은 덮어쓰지 않는다. 진행 상태(4절)는 만드는 시점 값이다.
+    """
+    day = day or today_kst()
+    out = OUT_ROOT / store.job / f"일별실행결과_{day.replace('-', '')}.md"
+    if out.exists() and REPORT_MARK not in out.read_text(encoding="utf-8"):
+        log.warning("손으로 쓴 %s 이 있어 덮어쓰지 않습니다", out.name)
+        return None
+    prog_path = OUT_ROOT / store.job / "daily_progress.csv"
+    prog: list[dict] = []
+    if prog_path.exists():
+        with prog_path.open(encoding="utf-8-sig", newline="") as f:
+            prog = [r for r in csv.DictReader(f) if r["date"] <= day]
+    p = prog[-1] if prog and prog[-1]["date"] == day else None
+    prev = (prog[-2] if p and len(prog) > 1 else prog[-1] if prog and not p else None)
+    runs = store.runs_on(day)
+    n = store.count()
+    wd = "월화수목금토일"[date.fromisoformat(day).weekday()]
+    L = [REPORT_MARK, f"# {store.job} 일별 실행 결과 — {p['day'] if p else ''} {day} ({wd})", "",
+         f"대상 {n:,}건 · 수치는 집계값만 · 원본 `daily_progress.csv` · 실행 기록 `state.db` runs · "
+         f"만든 시각 {now_kst().isoformat(timespec='minutes')}", ""]
+
+    L += ["## 1. 한눈에", ""]
+    if p:
+        state = {"ok": "✅ 정상", "partial": "✅ 정상 (한도 소진 정지)", "error": "❌ 오류"}.get(p["run_status"],
+                                                                                    p["run_status"])
+        gap = p["plan_gap_naver_cum"]
+        L += ["| 항목 | 값 |", "| --- | --- |",
+              f"| daily 실행 | {p['run_started'][11:16]} → {p['run_ended'][11:16]} "
+              f"({_minutes(p['run_started'], p['run_ended'])}) |",
+              f"| 상태 | {state} |",
+              f"| 정지 사유 | {p['stop_reason'] or '—'} |",
+              f"| NAVER 호출 · 1차 · 재시도 | {int(p['naver_calls']):,} · {int(p['naver_p1_done']):,} · "
+              f"{int(p['naver_retry_done']):,} |",
+              f"| NAVER 누적 1차 / 재시도 (계획 대비) | {int(p['naver_p1_cum']):,} / {int(p['naver_retry_cum']):,}"
+              + (f" ({int(gap):+,})" if gap not in ("", None) else "") + " |",
+              f"| 국민연금 API 호출 | {int(p['nps_api_calls']):,} |",
+              f"| 크롤링 (최근 24시간 처리 · 연락처 확보) | {int(p['crawl_done']):,} · {int(p['crawl_found']):,} |",
+              f"| 병합 (바뀐 행) | {int(p['merged_rows']):,} |",
+              f"| 남은 처리가 있는 행 | {int(p['deferred_rows']):,} |",
+              f"| 예상 종료 | {p['eta_date']} |", ""]
+    else:
+        L += ["이 날 daily 실적 행이 없습니다 (daily 미실행).", ""]
+
+    L += ["## 2. 단계별", "", "| 단계 | 실행 | 상태 | 처리 행 | 호출 | 소요 | 정지 사유 |",
+          "| --- | --- | --- | --- | --- | --- | --- |"]
+    for stage in STAGE_NAMES:
+        rs = [r for r in runs if r["stage"] == stage]
+        if not rs:
+            continue
+        status = " · ".join(sorted({r["status"] for r in rs}))
+        reasons = " · ".join(sorted({r["stop_reason"] for r in rs if r["stop_reason"]}))
+        span = (_minutes(rs[0]["started_at"], rs[0]["ended_at"]) if len(rs) == 1
+                else f"{rs[0]['started_at'][11:16]}~{rs[-1]['started_at'][11:16]}")
+        L.append(f"| {STAGE_NAMES[stage]} | {len(rs)}회 | {status} | {sum(r['rows_done'] for r in rs):,} | "
+                 f"{sum(r['calls'] or 0 for r in rs):,} | {span} | {reasons or '—'} |")
+    L += ["", "크롤링이 여러 회면 상주 크롤러 실행 묶음이다.", ""]
+
+    L += [f"## 3. 채움 누적 ({n:,} 기준)", "", "| 항목 | 누적 | 비율 | 전날 대비 |", "| --- | --- | --- | --- |"]
+    for label, col in (("주소", "fill_address"), ("우편번호", "fill_zipcode"), ("사이트", "fill_homepage"),
+                       ("전화", "fill_phone"), ("이메일", "fill_email"), ("업종 (기타미분류 제외)", "fill_industry")):
+        if not p:
+            break
+        v = int(p[col])
+        d = f"{v - int(prev[col]):+,}" if prev else "—"
+        L.append(f"| {label} | {v:,} | {v / n:.1%} | {d} |")
+    ksic = store.count("ksic_code<>''")
+    L.append(f"| 표준산업분류코드 (현재) | {ksic:,} | {ksic / n:.1%} | — |" if n else "")
+    basis = store.conn.execute("SELECT ksic_basis b, COUNT(*) c FROM rows WHERE ksic_code<>'' "
+                               "GROUP BY ksic_basis ORDER BY c DESC").fetchall()
+    L += ["", "표준산업분류 근거: " + " · ".join(f"{r['b'] or '-'} {r['c']:,}" for r in basis), ""]
+
+    L += [f"## 4. 진행 상태 ({now_kst().strftime('%m/%d %H:%M')} 기준)", "", "| 단계 | 상태별 행 수 |",
+          "| --- | --- |"]
+    for col in ("nts_state", "ftc_state", "kcw_state", "nps_state", "naver_state", "crawl_state"):
+        counts = store.conn.execute(f"SELECT {col} s, COUNT(*) c FROM rows GROUP BY {col} ORDER BY c DESC").fetchall()
+        L.append(f"| {STAGE_NAMES[col[:-6]]} | "
+                 + " · ".join(f"{STATE_NAMES.get(r['s'] or '', r['s'])} {r['c']:,}" for r in counts) + " |")
+
+    L += ["", "## 5. 점검", ""]
+    errors = [r for r in runs if r["status"] == "error"]
+    L.append(f"- 오류 단계: {', '.join(STAGE_NAMES.get(r['stage'], r['stage']) for r in errors) if errors else '없음'}")
+    locked = _log_count(store.job, day, "database is locked")
+    if locked is not None:
+        L.append(f"- 상주 크롤러 `database is locked` {locked}줄")
+    if p and int(p["crawl_done"]):
+        L.append(f"- 크롤링 연락처 확보율 (최근 24시간) {int(p['crawl_found']) / int(p['crawl_done']):.1%}")
+    L.append("")
+
+    out.write_text("\n".join(L), encoding="utf-8")
+    log.info("일별 실행 결과: %s", out.relative_to(PROJECT_ROOT))
+    return out
+
+
 # ── status · export · pause ─────────────────────────────────
 
 def cmd_status(args: argparse.Namespace) -> int:
@@ -461,6 +588,17 @@ def cmd_status(args: argparse.Namespace) -> int:
             print(f"\n문서 갱신: {doc.relative_to(PROJECT_ROOT)}")
         else:
             print(f"\n작업계획서에 {args.job} 일별 표가 없습니다 (표시 구간 {_markers(args.job)[0]})")
+    return 0
+
+
+def cmd_report(args: argparse.Namespace) -> int:
+    store = JobStore(args.job)
+    out = _write_report(store, args.date)
+    store.close()
+    if not out:
+        print("손으로 쓴 같은 이름 파일이 있어 만들지 않았습니다.")
+        return 1
+    print(f"일별 실행 결과: {out.relative_to(PROJECT_ROOT)}")
     return 0
 
 
@@ -533,6 +671,11 @@ def main() -> int:
     p = sub.add_parser("export")
     p.add_argument("--job", required=True)
     p.set_defaults(fn=cmd_export)
+
+    p = sub.add_parser("report")
+    p.add_argument("--job", required=True)
+    p.add_argument("--date", help="YYYY-MM-DD (기본 오늘) — 4절 진행 상태는 만드는 시점 값")
+    p.set_defaults(fn=cmd_report)
 
     for name in ("pause", "resume"):
         p = sub.add_parser(name)
