@@ -40,7 +40,9 @@ CLOSED = ("휴업자", "폐업자")
 NPS_FILE_DIR = PROJECT_ROOT / "data" / "external" / "nps"
 FTC_DUMP_PAGE_ROWS = 10_000          # 공정위 API 페이지 최대 (2026-10-08 실측)
 FTC_DUMP_MAX_AGE_DAYS = 30
-CRAWL_RETRY_DELAYS = (timedelta(days=1), timedelta(days=7))   # 일시 오류 재시도 간격
+# 일시 오류 재시도 — 다음 날 1회만 (10/22 사용자 결정: 재시도 대기의 82% 가 DNS 실패 = 없어진 도메인이라
+# 7일 뒤 2차 재시도는 결과가 같다. 이전 값은 (1일, 7일))
+CRAWL_RETRY_DELAYS = (timedelta(days=1),)
 CRAWL_CLAIM_TIMEOUT = timedelta(minutes=30)
 
 _COLUMNS = set(ALL_FIELDS)

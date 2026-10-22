@@ -297,7 +297,7 @@ launchctl kickstart -k gui/$(id -u)/kr.lguplus.bizcrawler.SME1101.crawl   # laun
 python scripts/batch.py status --job SME1101
 ```
 
-단계별 상태(`pending` 대기 · `done` 완료 · `retry_pending` 재시도 대기 · `failed_tmp` 일시 실패(1일·7일 뒤 재시도) · `failed` 실패 · `skipped` 대상 아님),
+단계별 상태(`pending` 대기 · `done` 완료 · `retry_pending` 재시도 대기 · `failed_tmp` 일시 실패(다음 날 1회 재시도) · `failed` 실패 · `skipped` 대상 아님),
 오늘 API 별 사용량/예산, 항목별 채움 수, 예상 종료일, 최근 실행 8건을 보여준다.
 
 | 위치 | 내용 |
