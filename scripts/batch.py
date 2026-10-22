@@ -8,6 +8,8 @@
     python scripts/batch.py status --job J [--update-doc]      진행률 · 오늘 한도 · 실적 문서 갱신
     python scripts/batch.py export --job J                     스냅샷 · 오늘 델타
     python scripts/batch.py report --job J [--date D]          일별실행결과_YYYYMMDD.md (daily 끝에 자동)
+    python scripts/batch.py nps-rejudge --job J                국민연금 매칭 재판정 (API 0회 · NAVER 재검색 예약)
+    python scripts/batch.py nps-api --job J [on|off]           국민연금 API 보완 켜기/끄기 (기본 off — 파일 기반)
     python scripts/batch.py pause|resume --job J
     python scripts/batch.py ftc-dump [--max-pages N]           공정위 전체 다운로드 (이어받기)
 
@@ -216,7 +218,9 @@ def cmd_daily(args: argparse.Namespace) -> int:
                                                                api_max=args.ftc_api_max)),
             # 상호 빈 행의 상호 — 국민연금 확정 · NAVER 질의에 쓰므로 그 앞에
             _run_stage(store, "kcw", lambda: stages.stage_kcw(store, quota, max_rows=args.max_rows)),
-            _run_stage(store, "nps", lambda: stages.stage_nps(store, quota, use_api=not args.no_nps_api,
+            # 월별 파일이 새로 올라왔으면 먼저 받는다 (다음 등록 예정일 전에는 포털에 묻지 않음)
+            _run_stage(store, "nps_file", lambda: stages.stage_nps_file(registry)),
+            _run_stage(store, "nps", lambda: stages.stage_nps(store, quota, use_api=_nps_api_on(store, args),
                                                                max_rows=args.max_rows)),
             _run_stage(store, "naver", lambda: stages.stage_naver(store, registry, quota,
                                                                    retry=not args.no_retry,
@@ -322,8 +326,10 @@ def _progress_row(store: JobStore, quota: Quota, started: str, results) -> dict:
     elif any(r.status == "partial" for r in results):
         status = "partial"
     # 한 단계라도 '남은 처리'가 있는 행 수 (단계별 합이 아니라 행 기준 — 이전엔 합산해 전체 행보다 컸다)
+    # 국민연금 API 를 꺼 둔 동안 api_pending 은 '남은 처리' 가 아니다 (보존된 큐)
+    nps_wait = "('pending','api_pending')" if store.meta("nps_api") == "on" else "('pending')"
     deferred = store.count("nts_state='pending' OR ftc_state='pending' OR kcw_state='pending' "
-                           "OR nps_state IN ('pending','api_pending') "
+                           f"OR nps_state IN {nps_wait} "
                            "OR naver_state IN ('pending','retry_pending') OR crawl_state IN ('pending','failed_tmp')")
     # 크롤링은 상주 워커가 하므로 실행 기록 대신 최근 24시간에 처리(점유)한 행으로 센다
     since = (now_kst() - timedelta(hours=24)).isoformat(timespec="seconds")
@@ -433,7 +439,8 @@ def _update_doc(store: JobStore, doc: Path) -> None:
 
 
 REPORT_MARK = "<!-- auto: batch.py report -->"
-STAGE_NAMES = {"nts": "국세청", "ftc": "공정위", "kcw": "근로복지공단", "nps": "국민연금", "naver": "NAVER",
+STAGE_NAMES = {"nts": "국세청", "ftc": "공정위", "kcw": "근로복지공단", "nps_file": "국민연금 파일",
+               "nps": "국민연금", "nps_rejudge": "국민연금 재판정", "naver": "NAVER",
                "crawl": "크롤링", "merge": "병합", "zip": "우편번호", "export": "내보내기"}
 STATE_NAMES = {"done": "완료", "pending": "대기", "api_pending": "API 대기", "retry_pending": "재시도 대기",
                "waiting": "URL 없음", "failed": "실패", "failed_tmp": "재시도 대기", "skipped": "제외",
@@ -602,6 +609,37 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def _nps_api_on(store: JobStore, args: argparse.Namespace) -> bool:
+    """국민연금 API 보완 — 10/22 부터 기본 꺼짐 (파일 기반). 잡 설정 nps_api=on 일 때만, --no-nps-api 는 항상 끔."""
+    return store.meta("nps_api") == "on" and not args.no_nps_api
+
+
+def cmd_nps_api(args: argparse.Namespace) -> int:
+    store = JobStore(args.job)
+    if args.state:
+        store.set_meta("nps_api", args.state)
+        store.commit()
+    state = store.meta("nps_api") or "off"
+    waiting = store.count("nps_state='api_pending'")
+    print(f"잡 {args.job} 국민연금 API 보완: {state} · API 대기 {waiting:,}행"
+          + (" — 다음 daily 부터 하루 한도(9,500회)까지 처리" if state == "on" else " — 파일 조인만 (대기 행은 보존)"))
+    store.close()
+    return 0
+
+
+def cmd_nps_rejudge(args: argparse.Namespace) -> int:
+    store = JobStore(args.job)
+    with _Lock(args.job, "daily"):          # daily 와 겹치지 않게
+        run_id = store.run_start("nps_rejudge")
+        stats = stages.nps_rejudge(store)
+        store.run_end(run_id, rows_done=stats["rows"], extra=stats)
+    store.close()
+    print(f"국민연금 재판정: {stats['rows']:,}행 → 확정 {stats['matched']:,} · 업종만 {stats['industry_only']:,} · "
+          f"불일치 {stats['name_mismatch']:,} · NAVER 재검색 예약 {stats['naver_requeue']:,}")
+    print("병합 · NAVER 재검색은 다음 daily 에서 (지금 하려면 batch.py daily --job " + args.job + ")")
+    return 0
+
+
 def cmd_export(args: argparse.Namespace) -> int:
     store = JobStore(args.job)
     res = stages.stage_export(store, OUT_ROOT / args.job)
@@ -645,7 +683,7 @@ def main() -> int:
     p.add_argument("--job", required=True)
     p.add_argument("--with-crawl", action="store_true", help="크롤링도 이 프로세스에서 (워커 없이 돌릴 때)")
     p.add_argument("--no-retry", action="store_true", help="NAVER 재시도 생략 (D9 체크포인트 결정)")
-    p.add_argument("--no-nps-api", action="store_true", help="국민연금 API 보완 끄기 (파일 조인만)")
+    p.add_argument("--no-nps-api", action="store_true", help="국민연금 API 보완 끄기 (잡 설정이 on 이어도)")
     p.add_argument("--ftc-api-max", type=int, default=3_000,
                    help="공정위 대기 행이 이보다 적으면 건별 API, 많으면 전체 다운로드")
     p.add_argument("--cap", action="append", metavar="API=N",
@@ -671,6 +709,15 @@ def main() -> int:
     p = sub.add_parser("export")
     p.add_argument("--job", required=True)
     p.set_defaults(fn=cmd_export)
+
+    p = sub.add_parser("nps-api")
+    p.add_argument("--job", required=True)
+    p.add_argument("state", nargs="?", choices=["on", "off"], help="생략하면 현재 상태만 보여 줌")
+    p.set_defaults(fn=cmd_nps_api)
+
+    p = sub.add_parser("nps-rejudge")
+    p.add_argument("--job", required=True)
+    p.set_defaults(fn=cmd_nps_rejudge)
 
     p = sub.add_parser("report")
     p.add_argument("--job", required=True)

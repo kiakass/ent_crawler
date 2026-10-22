@@ -15,7 +15,7 @@ Claude Code 가 이 저장소에서 작업할 때 따르는 지침. 사람용 �
 2. `python scripts/setup_check.py --init` — `.env` 템플릿 복사 · 폴더 생성 · 빠진 것 목록 (외부 호출 0회, 키 값은 출력 안 함)
 3. **사용자가 직접 할 일**을 목록으로 안내하고 기다린다. Claude 가 대신할 수 없다:
    - API 키 발급 후 `.env` 입력 (README 2절). 키는 **사용자 본인 계정으로 새로 발급** — 남의 키를 쓰면 한도 장부가 따로 놀아 함께 초과한다
-   - (권장) 국민연금 월별 CSV → `data/external/nps/` · (선택) 통계청 KSIC xlsx → `python scripts/extract_ksic.py <xlsx>`
+   - (권장) 국민연금 월별 CSV — `python scripts/fetch_nps_file.py` 로 받는다(로그인 불필요 · Claude 가 실행 가능, 약 115MB) · (선택) 통계청 KSIC xlsx → `python scripts/extract_ksic.py <xlsx>`
    - `sudo pmset repeat wakeorpoweron MTWRFSU 00:05:00` (sudo 라 사용자가 `! ` 로 직접)
 4. 사내망이면 `python scripts/setup_ca.py` → `export SSL_CERT_FILE=$PWD/certs/ca-bundle.pem`
 5. `python scripts/setup_check.py` 가 종료 코드 0 이 될 때까지 반복
@@ -75,8 +75,14 @@ grep -c "database is locked" logs/batch/kr.lguplus.bizcrawler.<잡>.crawl.err.lo
 도메인에 `[g마켓]` 같은 대괄호 값 → `urlparse` ValueError, 감싸서 버린다.
 
 **국민연금** — 파라미터는 camelCase(`bzowrRgstNo`, `wkplNm`; snake_case 는 조용히 0건). 사업자번호는 **앞 6자리만** 검색된다 →
-상호 유사도 0.6 이상으로 확정. 업종명 `BIZ_NO미존재사업장`(99…) · `해당없음`(00…) · `94…`(프리랜서 · 간병인 · 보험설계사 등 자체 코드) 은 업종이 아니다.
+`nps_bplc.judge()` 로 판정 — **확정은 완전일치 · 포함(짧은 쪽 4글자 이상) · 지점 제외 일치만**. 글자 유사도(SequenceMatcher)는 0.85 를 넘어도 확정 아님 —
+영문 이니셜 상호(`에이치` · `이앤씨`)끼리 0.6~0.7, `○○어린이집` 끼리 0.86 이 나와 다른 회사를 고른다(10/22 사람 검토). 글자 유사도 0.6 이상 +
+업종 명사(`INDUSTRY_NOUNS`) 공유면 `industry_only` — 업종만 쓰고 주소 · 우편번호 · NAVER 지역 기준으로는 안 쓴다(근거 `국민연금(유사상호)`).
+채점 상호는 입력 · 공정위 · 근로복지공단(`_nps_names`) — 병합 상호엔 NAVER 업소명이 들어가 쓰지 않는다. 업종명 `BIZ_NO미존재사업장`(99…) · `해당없음`(00…) · `94…`(프리랜서 · 간병인 · 보험설계사 등 자체 코드) 은 업종이 아니다.
 업종명이 KSIC 와 다르게 괄호 부기(`…(건축사)`) · 세분류 이름(`주거용 건물 건설업` → 4자리)으로 오기도 한다 — `ksic.lookup()` 이 처리. 대량은 월별 CSV 조인(API 와 업종코드 95% 일치).
+**10/22 부터 파일 기반** — API 보완은 기본 꺼짐(잡 meta `nps_api`, `batch.py nps-api --job J on` 으로 다시 켬). API 로만 얻는 행은 7.6%(파일에 없는 사업장)뿐인데
+하루 4,700행이 한계라 배치 전체를 붙잡았다. 못 찾은 행은 `api_pending` 으로 보존. `daily` 의 `nps_file` 단계가 포털 다음 등록 예정일 뒤 새 파일을 받고,
+`stage_nps` 가 meta `nps_file` 과 이름이 다르면 못 찾은 행을 새 파일로 재대조한다.
 
 **크롤링** — 한국 호스팅사 WAF 는 차단을 **HTTP 200 에러 페이지**로 준다(예: 호스팅사 403 문서로 리다이렉트). 착지 페이지가 에러 문서인지로 판정하고,
 "도메인이 바뀌면 실패" 로 막지 말 것(정상 이전까지 버려 결과가 줄었다). 사내 프록시 차단 페이지(사설 IP 로 이동 후 200)도 실패 처리(`platform.py::_dead_end`).

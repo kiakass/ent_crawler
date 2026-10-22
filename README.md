@@ -109,7 +109,7 @@ export SSL_CERT_FILE=$PWD/certs/ca-bundle.pem
 | 파일 | 필수 | 없으면 | 구하는 법 |
 | --- | --- | --- | --- |
 | `design/업종분류.md` | **필수** | 병합 단계가 파일 없음으로 실패 | **저장소에 포함돼 있다** — 사내 업종분류표 (CSV 형식: `업종대,업종중,업종소`). 분류를 바꿀 때만 고친다 |
-| `data/external/nps/*.csv` | 권장 | 국민연금 업종을 API 로만 채워 하루 약 4,700행밖에 못 함 | data.go.kr 파일데이터 **15083277** "국민연금공단_국민연금 가입 사업장 내역" 월별 CSV(cp949) 를 받아 그대로 둔다. 여러 개면 이름순 마지막 파일을 쓴다 |
+| `data/external/nps/*.csv` | 권장 | 국민연금 업종을 못 채움 (API 는 기본 꺼짐) | data.go.kr 파일데이터 **15083277** "국민연금공단_국민연금 가입 사업장 내역" 월별 CSV(cp949). `python scripts/fetch_nps_file.py` 로 받는다 (로그인 · 키 불필요). 이후엔 `daily` 가 포털의 다음 등록 예정일이 지나면 새 파일을 자동으로 받는다. 여러 개면 이름순 마지막 파일을 쓴다 |
 | `data/external/ksic/ksic11_세세분류.csv` · `ksic10_세세분류.csv` | 선택 | 표준산업분류 코드 칸이 비어 있음 (다른 항목은 정상) | 통계청 "한국표준산업분류 제11차 개정 분류체계(대-중-소-세-세세 구분)" xlsx 를 받아 `python scripts/extract_ksic.py <xlsx 경로>` |
 | `data/external/ksic/naver_ksic.csv` | 선택 | 표준산업분류를 국민연금 업종으로만 채움 (NAVER 카테고리 보충 없음) | 국민연금 매칭이 쌓인 잡에서 `python scripts/build_naver_ksic.py --job <잡>` — 상위 100 카테고리는 `naver_ksic_review_top100.csv` 의 `확정코드` 로 고칠 수 있다 |
 
@@ -203,7 +203,8 @@ python scripts/batch.py daily  --job SME1101 --with-crawl                    # �
 | 1 | `nts` 국세청 | 계속/휴업/폐업 상태 · 폐업일 (100건/호출) |
 | 2 | `ftc` 공정위 | 통신판매업 신고 정보 — 상호 · 주소 · 전화 · 도메인 |
 | 2b | `kcw` 근로복지공단 | 상호가 비고 공정위에도 없는 행만 — 상호 · 주소 · 우편번호 (사업자번호 10자리 정확 일치) |
-| 3 | `nps` 국민연금 | 월별 파일 조인 → 안 되는 행만 API — 업종코드 · 주소 · 우편번호 |
+| 3a | `nps_file` 국민연금 파일 | 포털에 새 월별 파일이 올라왔으면 받는다 (다음 등록 예정일 전에는 묻지 않음 · 실패하면 기존 파일) |
+| 3 | `nps` 국민연금 | 월별 파일 조인 — 업종코드 · 주소 · 우편번호. 새 파일이면 못 찾은 행을 다시 대조. 못 찾은 행은 `api_pending` 으로 남고, `nps-api on` 일 때만 API 로 보완 |
 | 4 | `naver` NAVER | 지역검색으로 업소 매칭 — 주소 · 홈페이지 링크 · 카테고리. 1차 → 미매칭은 질의를 바꿔 재시도 |
 | 5 | `crawl` 크롤링 | 확보된 홈페이지에서 전화 · 이메일 (`--with-crawl` 일 때만. 자동 실행에서는 상주 크롤러가 함) |
 | 6 | `merge` 병합 | 소스별 값을 골라 최종 칸 · 업종 대/중/소 계산 (값이 바뀐 행만) |
@@ -313,7 +314,7 @@ python scripts/batch.py status --job SME1101
 
 ```text
 사업자번호 · 상호명 · 이메일 · 전화 · 주소 · 우편번호 · 사이트주소 · 업종대 · 업종중 · 업종소
-· 표준산업분류코드 · 표준산업분류명 · 표준산업분류근거(국민연금/NAVER보정/NAVER추정) · 업종분류근거 · NAVER업종_대/중/소 · 국민연금업종코드 · 국민연금업종명
+· 표준산업분류코드 · 표준산업분류명 · 표준산업분류근거(국민연금/국민연금(유사상호)/NAVER보정/NAVER추정) · 업종분류근거 · NAVER업종_대/중/소 · 국민연금업종코드 · 국민연금업종명
 · 사업자상태(계속/휴업/폐업) · 폐업일자 · NAVER지역검증 · 사이트비고 · 우편번호출처 · 주소비고
 ```
 
@@ -346,6 +347,9 @@ python scripts/batch.py status --job SME1101
 | `export --job J` | `snapshot.csv` · `delta_오늘.csv` 다시 내보내기 |
 | `pause --job J` / `resume --job J` | 일시정지 / 재개 (자동 실행은 등록된 채로 건너뜀) |
 | `ftc-dump [--max-pages N]` | 공정위 전체 다운로드만 따로 (이어받기 됨) |
+| `nps-api --job J [on\|off]` | 국민연금 API 보완 켜기 / 끄기 (기본 off — 파일 기반). 끈 동안 API 대기 행은 보존된다 |
+| `nps-rejudge --job J` | 국민연금 매칭을 현재 판정 기준으로 다시 판정 (API 0회) · 주소가 바뀐 행은 NAVER 재검색 예약 |
+| `report --job J [--date D]` | `일별실행결과_YYYYMMDD.md` 다시 만들기 (`daily` 끝에 자동) |
 
 `daily` 옵션:
 
@@ -353,7 +357,7 @@ python scripts/batch.py status --job SME1101
 | --- | --- |
 | `--with-crawl` | 크롤링도 이 프로세스에서 (상주 크롤러 없이 돌릴 때) |
 | `--no-retry` | NAVER 재시도 생략 (1차만 — 기간 단축, 매칭은 줄어듦) |
-| `--no-nps-api` | 국민연금 API 보완 끄기 (파일 조인만) |
+| `--no-nps-api` | 국민연금 API 보완 끄기 (`nps-api on` 이어도 이번 실행만) |
 | `--ftc-api-max N` | 공정위 건별 API 로 처리할 최대 행 (기본 3,000 — 넘으면 전체 다운로드) |
 | `--cap API=N` | 오늘 API 상한 (예: `--cap naver=1000`). 기본 예산보다 크게 줄 수는 없다 |
 | `--max-rows N` | NAVER · 국민연금 API · 크롤링을 N행만 (시험용) |
@@ -365,6 +369,7 @@ python scripts/batch.py status --job SME1101
 | 명령 | 설명 |
 | --- | --- |
 | `scripts/selftest_batch.py` | 배치 · 병합 규칙 회귀 시험 (외부 API 소량) |
+| `scripts/fetch_nps_file.py [--check] [--force]` | 국민연금 월별 파일 받기 (`--check`: 포털 · 로컬 날짜 비교만) |
 | `scripts/check_status.py <csv> [--active-only]` | 국세청 상태조회만 단독 실행 |
 | `scripts/enrich_ftc.py <csv>` | 공정위 정보만 덧붙이기 |
 | `scripts/pipeline.py init / status / run <스텝>` | 소량(수백 건)용 CSV 파이프라인 (`data/master.csv`). 대량은 `batch.py` 를 쓴다 |

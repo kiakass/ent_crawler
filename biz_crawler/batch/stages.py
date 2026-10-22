@@ -361,6 +361,30 @@ def latest_nps_file() -> Path | None:
     return files[-1] if files else None
 
 
+def stage_nps_file(registry: Registry, *, force: bool = False) -> StageResult:
+    """포털의 월별 파일이 새로 올라왔으면 받는다 (API 한도 0 · 요청 2회 + 다운로드).
+
+    다음 등록 예정일 전에는 포털에 묻지 않는다. 실패해도 기존 파일로 계속 — partial 로 사유만 남긴다.
+    """
+    from ..nps_file import due, fetch_latest
+
+    res = StageResult("nps_file")
+    next_regist = registry.get("nps_file_next_regist")
+    if not force and latest_nps_file() and not due(next_regist, today_kst()):
+        res.status, res.extra = "skipped", {"next_regist": next_regist}
+        return res
+    try:
+        out = fetch_latest(NPS_FILE_DIR, force=force)
+    except Exception as exc:
+        res.status, res.stop_reason = "partial", f"국민연금 파일 확인 실패 — 기존 파일 사용: {type(exc).__name__}: {exc}"[:200]
+        return res
+    if out["next_regist"]:
+        registry.put("nps_file_next_regist", out["next_regist"])
+    res.rows_done = out["status"] == "downloaded"
+    res.extra = out
+    return res
+
+
 def _nps_index(path: Path) -> dict[str, list[tuple[str, str, str, str, str]]]:
     idx: dict[str, list[tuple[str, str, str, str, str]]] = {}
     with path.open(encoding="cp949", errors="replace", newline="") as f:
@@ -375,16 +399,43 @@ def _nps_index(path: Path) -> dict[str, list[tuple[str, str, str, str, str]]]:
     return idx
 
 
-def stage_nps(store: JobStore, quota: Quota, *, use_api: bool = True,
+def _nps_file_match(idx: dict, row: dict, names: list[str]) -> dict:
+    """월별 파일 후보 중 최고점 사업장을 judge() 로 판정한 갱신값."""
+    from ..nps_bplc import _site_name, judge
+
+    cands = idx.get(row["b_no"][:6], [])
+    # 후보 고르기는 글자 유사도 최고점 (같으면 가입 중) — 판정은 그 한 곳만
+    best = max(cands, key=lambda c: (max(similarity(n, _site_name(c[0])) for n in names), c[1] == "1"),
+               default=None)
+    status, score = judge(names, _site_name(best[0])) if best else ("not_found", 0.0)
+    if status not in ("matched", "industry_only"):
+        return {"nps_status": status, "nps_match_score": f"{score:.2f}" if score else ""}
+    sure = status == "matched"          # 업종만이면 주소 · 우편번호를 남기지 않는다
+    return {"nps_status": status, "nps_wkpl_name": _site_name(best[0]),
+            "nps_code": best[2], "nps_industry": best[3],
+            "nps_match_score": f"{score:.2f}", "nps_active": best[1],
+            "nps_error": "", "nps_address": best[4] if sure else "",
+            "nps_zip": best[5] if sure else "", "nps_state": "done"}
+
+
+def stage_nps(store: JobStore, quota: Quota, *, use_api: bool = False,
               max_rows: int | None = None) -> StageResult:
-    from ..nps_bplc import MIN_SCORE, NpsClient, _site_name
+    """월별 파일 조인이 기본. 파일로 못 찾은 행은 api_pending 으로 남겨 두고, use_api 일 때만 API 로 보완한다.
+
+    새 월별 파일이 들어오면(meta nps_file 과 이름이 다르면) 못 찾은 행(상호 불일치 · 없음)을 새 파일로 다시 대조한다.
+    API 는 10/22 부터 기본 꺼짐 (API 로만 얻는 행 7.6% · 하루 4,700행 병목) — `batch.py nps-api --job J on` 으로 다시 켠다.
+    """
+    from ..nps_bplc import NpsClient, _site_name
 
     res = StageResult("nps")
     pending = store.select("nps_state='pending'")
     path = latest_nps_file()
+    new_file = bool(path) and store.meta("nps_file") != path.name
+    rematch = store.select("nps_status IN ('name_mismatch','not_found') "
+                           "AND nps_state IN ('done','api_pending')") if new_file else []
     # 주소 컬럼 추가(10/08) 이전에 매칭된 행은 파일에서 주소만 채운다
     backfill = store.select("nps_status='matched' AND (nps_address='' OR nps_zip='')") if path else []
-    if (pending or backfill) and path:
+    if (pending or backfill or rematch) and path:
         idx = _nps_index(path)
         if backfill:
             with _Tx(store, "국민연금 주소 보충", len(backfill)) as tx:
@@ -399,33 +450,34 @@ def stage_nps(store: JobStore, quota: Quota, *, use_api: bool = True,
         hit = 0
         with _Tx(store, "국민연금 파일", len(pending)) as tx:
             for row in pending:
-                name = _known_name(row)
-                if not name:        # 앞 6자리만으로는 확정할 수 없다 · 근로복지공단 대기 중이면 다음 실행에
+                names = _nps_names(row)
+                if not names:       # 앞 6자리만으로는 확정할 수 없다 · 근로복지공단 대기 중이면 다음 실행에
                     if row.get("kcw_state") != "pending":
                         store.update(row["row_no"], {"nps_state": "skipped"}, dirty=False)
                     tx.tick()
                     continue
-                cands = idx.get(row["b_no"][:6], [])
-                best = max(cands, key=lambda c: (similarity(name, _site_name(c[0])), c[1] == "1"),
-                           default=None)
-                score = similarity(name, _site_name(best[0])) if best else 0.0
-                if best and score >= MIN_SCORE:
-                    upd = {"nps_status": "matched", "nps_wkpl_name": _site_name(best[0]),
-                           "nps_code": best[2], "nps_industry": best[3],
-                           "nps_match_score": f"{score:.2f}", "nps_active": best[1],
-                           "nps_error": "", "nps_address": best[4], "nps_zip": best[5],
-                           "nps_state": "done"}
-                    hit += 1
-                else:
-                    upd = {"nps_status": "name_mismatch" if best else "not_found",
-                           "nps_match_score": f"{score:.2f}" if score else "",
-                           "nps_state": "api_pending" if use_api else "done"}
-                store.update(row["row_no"], upd)
+                upd = _nps_file_match(idx, row, names)
+                hit += upd.get("nps_state") == "done"
+                # 못 찾으면 API 대기로 남긴다 — API 를 켜면 이어서 처리 (꺼져 있어도 큐는 유지)
+                store.update(row["row_no"], {"nps_state": "api_pending", **upd})
                 tx.tick()
                 res.rows_done += 1
         res.extra["file_hit"] = hit
+        if new_file:
+            rehit = 0
+            with _Tx(store, "국민연금 새 파일 재대조", len(rematch)) as tx:
+                for row in rematch:
+                    names = _nps_names(row)
+                    upd = _nps_file_match(idx, row, names) if names else {}
+                    if upd.get("nps_state") == "done":      # 찾은 행만 바꾼다 — 못 찾으면 이전 판정 유지
+                        store.update(row["row_no"], upd)
+                        rehit += 1
+                    tx.tick()
+            store.set_meta("nps_file", path.name)
+            res.extra["rematch"] = len(rematch)
+            res.extra["rematch_hit"] = rehit
     elif pending and not path:
-        # 파일이 없으면 전부 API 로
+        # 파일이 없으면 전부 API 대기로
         store.conn.execute("UPDATE rows SET nps_state='api_pending' WHERE nps_state='pending'")
 
     if not use_api:
@@ -441,17 +493,17 @@ def stage_nps(store: JobStore, quota: Quota, *, use_api: bool = True,
             if not quota.can("nps", 3):
                 res.status, res.stop_reason = "partial", quota.stopped.get("nps", "국민연금 API 일 예산 소진")
                 break
-            name = _known_name(row)
-            if not name:
+            names = _nps_names(row)
+            if not names:
                 if row.get("kcw_state") != "pending":
                     store.update(row["row_no"], {"nps_state": "skipped"}, dirty=False)
                 tx.tick()
                 continue
             before = client.calls
-            r = client.lookup(row["b_no"], name)
+            r = client.lookup(row["b_no"], names[0], tuple(names[1:]))
             quota.record("nps", client.calls - before, e429="429" in r.error)
             upd = r.to_row()
-            if r.status == "matched":
+            if r.status in ("matched", "industry_only"):
                 api_hit += 1
             elif row.get("nps_status") and r.status != "error":
                 upd = {"nps_status": row["nps_status"]}          # 파일 판정 유지
@@ -466,10 +518,57 @@ def stage_nps(store: JobStore, quota: Quota, *, use_api: bool = True,
 
 # ── 03 NAVER — 1차 · 재시도 ─────────────────────────────────
 
+def _nps_names(row: dict) -> list[str]:
+    """국민연금 채점용 상호 — 입력 · 공정위 · 근로복지공단 (검색은 첫 이름, 채점은 최고점).
+
+    병합 상호(final_company_name)는 쓰지 않는다 — NAVER 업소명이 들어가면 다른 업소 이름으로 채점된다 (10/22).
+    """
+    out: list[str] = []
+    for col in ("input_name", "ftc_company_name", "kcw_name"):
+        v = (row.get(col) or "").strip()
+        if v and v not in out:
+            out.append(v)
+    return out
+
+
 def _known_name(row: dict) -> str:
-    """국민연금 채점용 상호 — 병합 결과 > 입력 > 공정위 > 근로복지공단 (사업자번호만 받은 목록)."""
-    return (row.get("final_company_name") or row.get("input_name")
-            or row.get("ftc_company_name") or row.get("kcw_name") or "").strip()
+    """국민연금 검색 상호 — _nps_names 의 첫 이름."""
+    names = _nps_names(row)
+    return names[0] if names else ""
+
+
+def nps_rejudge(store: JobStore) -> dict:
+    """이미 확정한 국민연금 매칭을 judge() 로 다시 판정한다 (API 0회 · 10/22 기준 변경).
+
+    확정이 풀린 행은 주소 · 우편번호를 지우고, 그 주소가 NAVER 지역 키워드 · 검증 기준이었으면
+    (공정위 · 근로복지공단 주소 없음) NAVER 1차부터 다시 찾게 naver_state 를 pending 으로 돌린다.
+    """
+    from ..nps_bplc import judge
+
+    stats = {"rows": 0, "matched": 0, "industry_only": 0, "name_mismatch": 0, "naver_requeue": 0}
+    rows = store.select("nps_status IN ('matched','industry_only')")
+    with _Tx(store, "국민연금 재판정", len(rows)) as tx:
+        for row in rows:
+            status, score = judge(_nps_names(row), row.get("nps_wkpl_name") or "")
+            stats["rows"] += 1
+            stats[status] += 1
+            if status == row["nps_status"]:
+                tx.tick()
+                continue
+            upd = {"nps_status": status, "nps_match_score": f"{score:.2f}"}
+            if status != "matched":
+                upd.update(nps_address="", nps_zip="")
+            if status == "name_mismatch":
+                upd.update(nps_code="", nps_industry="", nps_active="")
+            had_region = bool((row.get("nps_address") or "").strip())
+            other = any((row.get(c) or "").strip() for c in ("ftc_road_address", "ftc_lot_address", "kcw_address"))
+            if (row["nps_status"] == "matched" and status != "matched" and had_region and not other
+                    and row.get("naver_state") in ("done", "retry_pending")):
+                upd["naver_state"] = "pending"
+                stats["naver_requeue"] += 1
+            store.update(row["row_no"], upd)
+            tx.tick()
+    return stats
 
 
 def _query_name(row: dict) -> str:

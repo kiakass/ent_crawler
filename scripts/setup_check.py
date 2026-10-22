@@ -87,7 +87,7 @@ def main() -> int:
     check(any((ROOT / "design" / n).exists() for n in ("업종분류.csv", "업종분류.md")),
           "design/업종분류.md", "저장소에 포함된 파일 — git pull 또는 git checkout design/업종분류.md (병합 단계 필수)")
     check(any((ROOT / "data/external/nps").glob("*.csv")), "data/external/nps/*.csv",
-          "data.go.kr 15083277 월별 CSV (없으면 국민연금 API 만 — 하루 약 4,700행)", required=False)
+          "python scripts/fetch_nps_file.py 로 받기 (없으면 국민연금 업종을 못 채움 — API 는 기본 꺼짐)", required=False)
     check((ROOT / "data/external/ksic/ksic11_세세분류.csv").exists(), "data/external/ksic/ksic11_세세분류.csv",
           "python scripts/extract_ksic.py <통계청 xlsx> (없으면 표준산업분류 칸만 빔)", required=False)
 

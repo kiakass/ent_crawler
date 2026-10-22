@@ -213,6 +213,62 @@ z = stages.resolve_zip({"final_address": "서울특별시 중구 세종대로 11
 check("최종 주소가 근로복지공단 주소면 그 우편번호 (API 호출 없음)", z["final_zipcode"] == "04524" and z["zip_source"] == "근로복지공단")
 st3.close()
 
+# 8b) 국민연금 판정 — 글자 유사도만이면 확정 안 함 · 업종 명사 공유면 업종만 (10/22)
+from biz_crawler.nps_bplc import judge
+check("국민연금: 법인 표기만 다르면 확정", judge(["가상건설"], "(주)가상건설")[0] == "matched")
+check("국민연금: 영문 이니셜 상호끼리 0.6 대는 불일치", judge(["에이치디엔씨"], "에이치디앤씨")[0] == "name_mismatch")
+check("국민연금: 업종 명사 공유면 업종만 (글자 유사도 0.86 이어도 확정 아님)",
+      judge(["가나다어린이집"], "가나라어린이집")[0] == "industry_only")
+check("국민연금: 짧은 이름의 포함관계는 확정 아님", judge(["에이치"], "에이치디")[0] != "matched")
+check("국민연금: 채점은 입력 · 공정위 상호 중 최고점", judge(["전혀다른이름", "가상건설"], "가상건설")[0] == "matched")
+j5 = "TEST_UNIT5"; shutil.rmtree(BATCH_ROOT / j5, ignore_errors=True)
+st5 = JobStore(j5); st5.import_rows([("1248100998", "가나다어린이집"), ("2208162517", "에이치디엔씨")], source="unit")
+for rn, wk in ((1, "가나라어린이집"), (2, "에이치디앤씨")):
+    st5.update(rn, {"nps_status": "matched", "nps_wkpl_name": wk, "nps_code": "889101", "nps_industry": "어린이집",
+                    "nps_address": "서울특별시 중구 세종대로 110", "nps_zip": "04524", "naver_state": "done"})
+rj = stages.nps_rejudge(st5); a, b = st5.select("1=1")
+check("재판정: 업종만은 주소 지우고 업종 유지 · 불일치는 업종도 지움 · NAVER 재검색 예약",
+      a["nps_status"] == "industry_only" and a["nps_address"] == "" and a["nps_code"] == "889101"
+      and b["nps_status"] == "name_mismatch" and b["nps_code"] == "" and rj["naver_requeue"] == 2
+      and a["naver_state"] == "pending")
+m = merge_row(a)
+check("병합: 업종만 매칭은 근거 '(유사상호)' · 주소 안 씀",
+      m["ksic_basis"] in ("국민연금(유사상호)", "") and "(유사상호)" in m["ind_basis"] and not m["final_address"])
+st5.close(); shutil.rmtree(BATCH_ROOT / j5)
+
+# 8c) 파일 기반 국민연금 — API 기본 꺼짐 · 못 찾은 행은 api_pending 보존 · 새 월별 파일이면 재대조 (10/22)
+import csv as _csv
+def _nps_csv(path, rows):
+    with path.open("w", encoding="cp949", newline="") as f:
+        w = _csv.writer(f); w.writerow([f"c{i}" for i in range(22)])
+        for name, prefix, code, ind in rows:
+            w.writerow(["2026-09", name, prefix, "1", "04524", "", "서울특별시 중구 세종대로", "", "", "", "", "", "1",
+                        code, ind, "", "", "", "1", "0", "0", "0"])
+f1, f2 = S / "nps_bplc_20260901.csv", S / "nps_bplc_20261001.csv"
+_nps_csv(f1, [("가상파일상호", "124810", "722000", "응용 소프트웨어 개발 및 공급업")])
+_nps_csv(f2, [("가상파일상호", "124810", "722000", "응용 소프트웨어 개발 및 공급업"),
+              ("늦게가입한상호", "220816", "461000", "산업용 농축산물 도매업")])
+j6 = "TEST_UNIT6"; shutil.rmtree(BATCH_ROOT / j6, ignore_errors=True)
+st6 = JobStore(j6); st6.import_rows([("1248100998", "가상파일상호"), ("2208162517", "늦게가입한상호")], source="unit")
+_orig_latest = stages.latest_nps_file
+stages.latest_nps_file = lambda: f1
+r6 = stages.stage_nps(st6, q)
+a, b = st6.select("1=1")
+check("국민연금 기본은 파일만 (API 0회) · 못 찾은 행은 api_pending 보존",
+      r6.calls == 0 and a["nps_status"] == "matched" and b["nps_state"] == "api_pending" and st6.meta("nps_file") == f1.name)
+stages.latest_nps_file = lambda: f2
+r6 = stages.stage_nps(st6, q)
+b = st6.select("row_no=2")[0]
+check("새 월별 파일이면 못 찾은 행을 다시 대조", b["nps_status"] == "matched" and b["nps_state"] == "done"
+      and r6.extra.get("rematch_hit") == 1 and st6.meta("nps_file") == f2.name)
+r6 = stages.stage_nps(st6, q)
+check("같은 파일이면 재대조 안 함", "rematch" not in r6.extra)
+stages.latest_nps_file = _orig_latest
+from biz_crawler.nps_file import due, local_date
+check("월별 파일: 등록 예정일 전엔 확인 안 함", not due("2026-10-26", "2026-10-25") and due("2026-10-26", "2026-10-26") and due(""))
+check("월별 파일: 로컬 최신 날짜", local_date(S) == "20261001")
+st6.close(); shutil.rmtree(BATCH_ROOT / j6)
+
 # 9) NAVER 키 2개 — 키1 예산이 0 이면 키2 로 (호출 없음, 가짜 키)
 import os
 _env = {k: os.environ.get(k) for k in ("NCP_APIGW_KEY_ID_2", "NCP_APIGW_KEY_2")}
