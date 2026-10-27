@@ -2,3 +2,4 @@ httpx>=0.28
 tenacity>=9.0
 python-dotenv>=1.0
 playwright>=1.63   # 스텝4 플랫폼 크롤링. 설치 후: python -m playwright install chromium
+pdfplumber>=0.11   # 공개 명단(scripts/public_lists.py) — 고용노동부 공표 PDF 표 추출

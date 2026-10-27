@@ -54,7 +54,10 @@ image.png
 
 # 내부 문서 · 메모 (인계 · 작업계획) — 공개 저장소에 올리지 않음. 업종분류표만 예외 (병합 필수)
 design/*
-!design/업종분류.md
+!design/업종분류기준/
+design/업종분류기준/*
+!design/업종분류기준/업종분류.md
+work_hist/
 todo/
 cmd.md
 테스트

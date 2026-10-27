@@ -208,6 +208,14 @@ m = merge_row({"kcw_name": "근복상호", "kcw_address": "서울특별시 중�
 check("병합: 근로복지공단 상호 · 주소", m["final_company_name"] == "근복상호" and "근로복지공단" in m["source"])
 m = merge_row({"ftc_company_name": "공정위상호", "kcw_name": "근복상호"})
 check("병합: 공정위 상호가 근로복지공단보다 먼저", m["final_company_name"] == "공정위상호")
+from biz_crawler.namematch import strip_company_forms
+m = merge_row({"ftc_company_name": "주식회사 공정위상호", "input_name": "(주)공정위상호"})
+check("병합: 상호명에서 회사 표기 제거",
+      m["final_company_name"] == "공정위상호"
+      and [strip_company_forms(n) for n in ("㈜가나", "가나 ( 주 )", "사단법인 가나", "가나(주식회사)", "주)가나", "(주)")]
+      == ["가나", "가나", "가나", "가나", "가나", "(주)"])
+check("병합: 협동조합 · 사회복지법인 표기는 유지",
+      strip_company_forms("가나협동조합") == "가나협동조합" and strip_company_forms("사회복지법인 가나") == "사회복지법인 가나")
 z = stages.resolve_zip({"final_address": "서울특별시 중구 세종대로 110", "kcw_address": "서울특별시 중구 세종대로 110",
                         "kcw_zip": "04524"}, None, reg, None)
 check("최종 주소가 근로복지공단 주소면 그 우편번호 (API 호출 없음)", z["final_zipcode"] == "04524" and z["zip_source"] == "근로복지공단")
@@ -300,6 +308,53 @@ check("같은 날 다시 내보내도 그날 첫 기준 유지",
       er.extra[f"delta_{day.replace('-', '')}.csv"] == 1 and st4.meta("delta_since") == f"{yday}T02:00:00+09:00"
       and st4.meta("last_export_at").startswith(day))
 st4.close()
+
+# ── 공개 명단 사업자번호 찾기 (외부 호출 없음) ──────────────
+from biz_crawler import public_lists as pl
+def _pw(cell):
+    parties, site = pl.parse_workplace(cell)
+    return [(x["상호"], x["원하청"], x["공동수급"], x["사업장"]) for x in parties], site
+check("산안법 사업장 칸: 현장명 · 원청/하청 꼬리표 · (주)로 시작하는 하청 · 공동수급 · 공장 · 줄바꿈 상호",
+      _pw("가나건설㈜\n(다라현장)") == ([("가나건설㈜", "", [], "")], "다라현장")
+      and _pw("가나㈜(원청)\n(주)다라(하청)\n(마바\n신축공사)")
+      == ([("가나㈜", "원청", [], ""), ("(주)다라", "하청", [], "")], "마바신축공사")
+      and _pw("(주)가나(하청)")[1] == ""
+      and _pw("가나㈜\n(다라, 마바㈜)\n(원청)\n사아(하청)")[0][0] == ("가나㈜", "원청", ["다라", "마바㈜"], "")
+      and _pw("가나㈜ 다라공장")[0] == [("가나㈜", "", [], "다라공장")]
+      and _pw("가나다라마\n바사아")[0] == [("가나다라마바사아", "", [], "")])
+check("중처법 공표제목: 번호 뒤 · '형 확정' 앞이 회사 · 도급인/수급인 두 회사 · 舊 상호",
+      [c["상호"] for c in pl.sapa_companies("13. 가나건설 주식회사 형 확정 통보에 따른 중대산업재해 발생사실의 공표")]
+      == ["가나건설 주식회사"]
+      and [(c["상호"], c["도급수급"]) for c in pl.sapa_companies(
+          "2. 가나 주식회사 (도급인), 다라 주식회사 (수급인) 형 확정 통보에 따른 …")]
+      == [("가나 주식회사", "도급인"), ("다라 주식회사", "수급인")]
+      and pl.sapa_companies("3. 가나 주식회사 (舊 다라 주식회사) 형 확정 …")[0]["구상호"] == "다라 주식회사")
+_orig_nts = pl._nts_status
+pl._nts_status = lambda bnos, fetch: {"1018100001": {"stt": "03", "end": "20190301"},   # 재해 전 폐업
+                                      "1018100002": {"stt": "01", "end": ""},
+                                      "1018100003": {"stt": "03", "end": "20230601"},   # 재해 뒤 폐업 — 남긴다
+                                      "1018100004": {"stt": "", "end": ""}}             # 국세청 미등록
+_r1 = {"사업자번호": "", "재해연도": "2020", "_hit": {"후보": ["1018100001", "1018100002", "1018100004"], "종류": "완전", "지역": True}}
+_r2 = {"사업자번호": "", "재해연도": "2020", "_hit": {"후보": ["1018100002", "1018100003"], "종류": "완전", "지역": False}}
+check("공개 명단: 후보 여러 곳 → 국세청 기준일 전 폐업 · 미등록 제외 후 1곳이면 채택, 뒤에 폐업한 후보는 남김",
+      pl.narrow_by_nts([_r1, _r2], "재해연도", False) == 1
+      and _r1["사업자번호"] == "101-81-00002" and _r2["사업자번호"] == "")
+pl._nts_status = _orig_nts
+pidx = pl.BiznoIndex({"가나다라", "가나", "같은이름"})
+pidx.add("가나다라", "1018112345", "", "공정위")                  # 법인 번호
+pidx.add("가나다라", "1010112345", "", "공정위")                  # 개인 번호 — 같은 이름
+pidx.add("같은이름", "1018100001", "서울특별시 중구 세종대로 1", "공정위")
+pidx.add("같은이름", "1018100002", "부산광역시 해운대구 센텀로 1", "공정위")
+pidx.add("같은이름", "1018100003", "부산광역시 해운대구 센텀로 2", "CISO")
+pidx.add("가나", "1018100009", "", "공정위")
+check("공개 명단: 회사 표기 상호는 법인 번호만 · 표기 없으면 후보 여러 곳",
+      pidx.resolve("(주)가나다라")["bno"] == "1018112345" and pidx.resolve("가나다라")["bno"] == "")
+check("공개 명단: 여러 곳이면 시·군·구로 좁힘 · 좁혀도 여럿이면 CISO 우선(prefer) 일 때만",
+      pidx.resolve("같은이름", "서울 중구 어딘가")["bno"] == "1018100001"
+      and pidx.resolve("같은이름", "부산 해운대구 어딘가")["bno"] == ""
+      and pidx.resolve("같은이름", "", prefer="CISO")["bno"] == "1018100003")
+check("공개 명단: 3글자 이하 상호는 지역 없이 채택 안 함 · 앞부분 일치는 지역 필요",
+      pidx.resolve("가나")["bno"] == "" and pidx.resolve("가나다라 마바공장")["bno"] == "")
 
 st.close(); st2.close(); reg.close()
 shutil.rmtree(BATCH_ROOT / job); shutil.rmtree(BATCH_ROOT / j2); shutil.rmtree(BATCH_ROOT / j3); shutil.rmtree(BATCH_ROOT / j4)

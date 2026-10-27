@@ -1,0 +1,3 @@
+# /session-start · /update-handoff 설정 — 세션 인계 문서는 work_hist/ 에 날짜별로 (10/27 사용자 결정)
+handoff_dir: work_hist/
+handoff_prefix: 인계

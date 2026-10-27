@@ -4,7 +4,7 @@ NAVER category 는 '음식점>카페,디저트>카페' 처럼 '>' 로 단계를 
 단계 안에 쉼표가 들어간다. 단계 수는 1~4로 일정하지 않으므로
 1단계=대, 2단계=중, 3단계 이하=소로 자른다 (split_category).
 
-사내 분류(design/업종분류.md)는 소 이름이 전부 고유하다. 그래서 매핑
+사내 분류(design/업종분류기준/업종분류.md)는 소 이름이 전부 고유하다. 그래서 매핑
 규칙은 '카테고리 패턴 → 소' 만 적고 대·중은 표에서 찾는다. 표에 없는
 소를 규칙에 쓰면 로드 시점에 실패한다 — 오타가 조용히 빈 값이 되지 않게.
 
@@ -28,9 +28,9 @@ from functools import lru_cache
 from .config import PROJECT_ROOT
 
 # 사내 업종분류표. 내용은 CSV(업종대,업종중,업종소)다. .csv 가 있으면 그것을 쓴다.
-TAXONOMY = next((p for p in (PROJECT_ROOT / "design" / "업종분류.csv",
-                             PROJECT_ROOT / "design" / "업종분류.md") if p.exists()),
-                PROJECT_ROOT / "design" / "업종분류.md")
+TAXONOMY_DIR = PROJECT_ROOT / "design" / "업종분류기준"
+TAXONOMY = next((p for p in (TAXONOMY_DIR / "업종분류.csv", TAXONOMY_DIR / "업종분류.md") if p.exists()),
+                TAXONOMY_DIR / "업종분류.md")
 
 RESULT_FIELDS = ["ind_naver_l1", "ind_naver_l2", "ind_naver_l3",
                  "ind_large", "ind_mid", "ind_small", "ind_basis"]

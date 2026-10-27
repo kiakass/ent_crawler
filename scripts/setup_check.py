@@ -84,8 +84,9 @@ def main() -> int:
           "사내망이면 python scripts/setup_ca.py (사내망 밖이면 무시)", required=False)
 
     print("\n준비 파일 (README 3절)")
-    check(any((ROOT / "design" / n).exists() for n in ("업종분류.csv", "업종분류.md")),
-          "design/업종분류.md", "저장소에 포함된 파일 — git pull 또는 git checkout design/업종분류.md (병합 단계 필수)")
+    check(any((ROOT / "design" / "업종분류기준" / n).exists() for n in ("업종분류.csv", "업종분류.md")),
+          "design/업종분류기준/업종분류.md",
+          "저장소에 포함된 파일 — git pull 또는 git checkout design/업종분류기준/업종분류.md (병합 단계 필수)")
     check(any((ROOT / "data/external/nps").glob("*.csv")), "data/external/nps/*.csv",
           "python scripts/fetch_nps_file.py 로 받기 (없으면 국민연금 업종을 못 채움 — API 는 기본 꺼짐)", required=False)
     check((ROOT / "data/external/ksic/ksic11_세세분류.csv").exists(), "data/external/ksic/ksic11_세세분류.csv",

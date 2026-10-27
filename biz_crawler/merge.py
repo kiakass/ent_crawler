@@ -3,7 +3,8 @@
 같은 항목을 국세청·공정위·NAVER·홈페이지 크롤링 네 곳에서 얻으므로
 우선순위를 고정해 둔다. 순위는 실측 신선도에 따른다:
 
-- 상호명 : 공정위(공식 등록명) > 근로복지공단(보험 가입명) > NAVER(간판명) > 입력값
+- 상호명 : 공정위(공식 등록명) > 근로복지공단(보험 가입명) > NAVER(간판명) > 입력값.
+  (주) · 주식회사 · 유한회사 · 사단법인 같은 회사 표기는 빼고 저장한다 (namematch.strip_company_forms)
 - 주소   : 공정위 도로명 > 근로복지공단 > NAVER 도로명 > NAVER 지번 > 공정위 지번
   (근로복지공단은 상호 없이 사업자번호만 받은 행에만 조회한다 — 10/16)
 - 전화   : 홈페이지 크롤링 > 공정위
@@ -35,7 +36,7 @@ from __future__ import annotations
 import re
 
 from .industry import classify as classify_industry
-from .namematch import core
+from .namematch import core, strip_company_forms
 from .region import known_address, sido
 from .urls import pick, sanitize
 
@@ -189,6 +190,8 @@ def merge_row(row: dict) -> dict:
             vals = [x for x in vals if address_complete(x[1])] + [x for x in vals if not address_complete(x[1])]
         if vals:
             col, val = vals[0]
+            if field == "final_company_name":
+                val = strip_company_forms(val)      # (주) · 주식회사 등은 빼고 저장 (10/26)
             out[field] = val
             if field == "final_address":
                 # 국민연금 주소는 건물번호가 없다 — 최후 순위 · 비고로 구분 (10/08 사용자 결정)
@@ -230,7 +233,7 @@ def merge_row(row: dict) -> dict:
 
     # 입력 상호명을 그대로 돌려준 것은 '수집'이 아니므로 점수에서 뺀다.
     echoed_name = (out["final_company_name"]
-                   and out["final_company_name"] == (row.get("input_name") or "").strip()
+                   and out["final_company_name"] == strip_company_forms(row.get("input_name"))
                    and "공정위" not in sources and "NAVER" not in sources)
     scored = ("final_company_name", "final_address", "final_phone",
               "final_email", "final_homepage")

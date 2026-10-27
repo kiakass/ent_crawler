@@ -85,6 +85,23 @@ def strip_org_raw(name: str | None) -> str:
     return " ".join(s.split())
 
 
+# 결과 상호명에서 빼는 회사 표기 (10/26 사용자 결정). 협동조합 · 영농조합법인 · 사회복지법인 · 의료법인 ·
+# 학교법인 은 기관 성격이라 남긴다 — 빼면 '○○협동조합' 이 '○○' 만 남는다.
+_COMPANY_FORMS = re.compile(
+    r"유한책임회사|주식회사|유한회사|합자회사|합명회사|사단법인|재단법인|[㈜㈔㈐]"
+    r"|[(（]\s*(?:주|유|사|재|합)\s*[)）]"
+    r"|^\s*주\s*[)）]|[(（]\s*주\s*$"      # 괄호 한쪽이 빠진 입력 ('주)○○' · '○○(주')
+    r"|[(（]\s*[)）]")                    # '(주식회사)' 를 지우고 남은 빈 괄호
+
+
+def strip_company_forms(name: str | None) -> str:
+    """결과 상호명용: 회사 표기((주) · 주식회사 · 유한회사 · 사단법인 …)만 지운다. 다 지워지면 원문."""
+    s = strip_tags(name)
+    out = _COMPANY_FORMS.sub(" ", s)
+    out = " ".join(_COMPANY_FORMS.sub(" ", out).split())    # 두 번: 지운 뒤 생긴 빈 괄호까지
+    return out or " ".join(s.split())
+
+
 def strip_branch_raw(name: str | None) -> str:
     """원문에서 끝에 붙은 지점 표기를 뗀다."""
     return _BRANCH.sub("", strip_tags(name)).strip()

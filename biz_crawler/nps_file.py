@@ -33,16 +33,19 @@ def local_date(dest: Path) -> str:
     return max(dates, default="")
 
 
-def remote_info(client) -> dict:
-    """포털의 현재 파일 — {'date', 'atch_file_id', 'detail_sn', 'next_regist', 'name'}."""
-    page = client.get(f"{BASE}/data/{DATA_PK}/fileData.do")
+def remote_info(client, data_pk: str = DATA_PK) -> dict:
+    """포털의 현재 파일 — {'date', 'atch_file_id', 'detail_sn', 'next_regist', 'name'}.
+
+    data.go.kr 파일데이터는 화면 구조가 같아 다른 데이터셋도 받는다 (public_lists 의 CISO 신고 현황).
+    """
+    page = client.get(f"{BASE}/data/{data_pk}/fileData.do")
     page.raise_for_status()
-    m = re.search(rf"fn_fileDataDown\('{DATA_PK}',\s*'([^']+)',\s*'[^']*',\s*'(\d+)'", page.text)
+    m = re.search(rf"fn_fileDataDown\('{data_pk}',\s*'([^']+)',\s*'[^']*',\s*'(\d+)'", page.text)
     if not m:
         raise ValueError("포털 페이지에서 파일 키를 찾지 못함 (화면 구조 변경?)")
     detail_pk, sn = m.group(1), m.group(2)
     r = client.post(f"{BASE}/tcs/dss/selectFileDataDownload.do",
-                    data={"publicDataPk": DATA_PK, "publicDataDetailPk": detail_pk, "fileDetailSn": sn})
+                    data={"publicDataPk": data_pk, "publicDataDetailPk": detail_pk, "fileDetailSn": sn})
     r.raise_for_status()
     j = r.json()
     reg = j.get("fileDataRegistVO") or {}

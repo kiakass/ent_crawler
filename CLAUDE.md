@@ -45,8 +45,8 @@ grep -c "database is locked" logs/batch/kr.lguplus.bizcrawler.<잡>.crawl.err.lo
 - **응답 · 로그 · 보고에 고객 데이터(상호명 · 사업자번호 · 연락처 · 주소)를 쓰지 않는다. 집계 · 비율 · 분포로만 보고한다.**
   개별 행은 사용자가 먼저 그 행을 지목했을 때만 최소 범위로. 터미널 출력 스크립트도 원문을 덤프하지 않게 짠다
 - 대표자명 · 대표자 이메일 · 휴대폰(`crawl_mobile`)은 결과로 내보내지 않는다 — 대표전화로 병합하지 않는 이유
-- 이 저장소는 **public** 이다. `.env` · `certs/` · `input/` · `data/` · `output/` · `logs/` · CSV/XLSX · `design/`(내부 문서) 를 커밋하지 않는다
-  (예외: `samples/sample_*.csv` — 사업자가 스스로 공개한 번호만 · `design/업종분류.md` — 업종분류표, 병합 필수). 커밋 전 `git status` 와 staged 파일 목록을 확인
+- 이 저장소는 **public** 이다. `.env` · `certs/` · `input/` · `data/` · `output/` · `logs/` · CSV/XLSX · `design/`(내부 문서) · `work_hist/`(세션 인계) · `todo/` 를 커밋하지 않는다
+  (예외: `samples/sample_*.csv` — 사업자가 스스로 공개한 번호만 · `design/업종분류기준/업종분류.md` — 업종분류표, 병합 필수). 커밋 전 `git status` 와 staged 파일 목록을 확인
 
 ### 코드
 - 외부 HTTP 는 **반드시 `biz_crawler.config.http_client()`** 로 만든다. `httpx.Client` 를 직접 만들면 사내 CA 를 빼먹는다. `verify=False` 금지
@@ -62,6 +62,10 @@ grep -c "database is locked" logs/batch/kr.lguplus.bizcrawler.<잡>.crawl.err.lo
 ### 데이터 출력
 - 사업자번호는 항상 하이픈 표기(`bizno.format_display()`). 숫자 10자리는 Excel 이 `1.82E+09` 로 바꿔 복구 불가 — 500건 중 373건을 잃은 적이 있다.
   입력 쪽 `bizno.normalize()` 는 과학적 표기를 추측하지 않고 `BiznoError`
+- 기업명(상호명)을 저장할 때는 회사 표기를 뺀다 — `(주)` `㈜` `주식회사` `유한회사` `(유)` `합자회사` `합명회사` `유한책임회사` `사단법인` `재단법인` `(사)` `(재)`.
+  **`namematch.strip_company_forms()`** 로 한다 (병합 `final_company_name` 에 적용, 새 출처의 기업명도 같은 함수로). 10/26 사용자 결정.
+  `협동조합` `영농조합법인` `사회복지법인` `의료법인` `학교법인` 은 기관 성격이라 **남긴다**.
+  비교용 키 `normalize()` · 검색어용 `strip_org_raw()` 와는 다른 함수다 — 그 둘은 단체 표기 · 영문 `Ltd` 까지 지운다
 
 ## 소스별 함정 (실측 — 코드에 이미 반영됨, 고칠 때 되돌리지 말 것)
 
@@ -88,6 +92,16 @@ grep -c "database is locked" logs/batch/kr.lguplus.bizcrawler.<잡>.crawl.err.lo
 "도메인이 바뀌면 실패" 로 막지 말 것(정상 이전까지 버려 결과가 줄었다). 사내 프록시 차단 페이지(사설 IP 로 이동 후 200)도 실패 처리(`platform.py::_dead_end`).
 robots.txt 는 봇 UA 로 받는다 — 브라우저 UA 로 받으면 일부 SNS 가 로그인 HTML 을 줘서 fail-open 이 Disallow 를 뚫는다.
 html 응답은 robots 로 파싱하지 않고, 플랫폼(블로그 · SNS)은 fail-closed, 자체 홈페이지는 fail-open.
+
+**공개 명단** (`scripts/public_lists.py`, 배치와 별도 · 10/26) — CISO 신고 명단만 사업자번호가 있고 ISMS · 산재는 상호로 찾는다.
+근로복지공단 API 는 사업장명 검색이 없다(다른 파라미터는 조용히 무시되고 전체가 온다) — 조건 없이 `numOfRows=50000` 으로 산재 가입 사업장
+349만 건을 70회에 통째로 받아 참조로 쓴다 (`fetch_kcw`, 한도 장부 kcw 기록). 이걸 넣고 검증 정확도 91% → 98%.
+후보가 여럿이면 국세청 상태로 기준일 전 폐업 · 미등록 후보를 빼고 1곳 남을 때만 채택(`narrow_by_nts`, 검증 97%) — 기준일 뒤 폐업한 후보는 빼지 않는다(공표 뒤 폐업일 수 있다). 후보 50곳 초과는 조회하지 않는다.
+유일 후보만 채택 · 회사 표기 상호는 법인 번호(가운데 81~88)만 · 앞부분 일치는 지역까지 맞을 때만 (검증 7건 중 5건 오답) · 글자 유사도 금지.
+ISMS 는 후보가 여럿이면 CISO 신고 업체 하나를 고른다. 산안법 PDF 는 `○ ’YY년 … (N개소)` 소제목이 단위 — 머리말 없는 舊 시행령
+'중대재해 발생 사업장' 구간이 있다. 소재지는 재해 현장이라 본사와 다르다.
+사업장명 칸은 `parse_workplace()` — `(원청)` `(하청)` 꼬리표로 회사를 나누고(닫는 괄호 빠진 원문 있음), `(주)○○` 로 시작하는 줄은 현장명이 아니라 회사다.
+중처법 PDF 는 회사가 '공표제목' 칸(번호 뒤 · '형 확정' 앞, `(도급인)` `(수급인)` · `(舊 …)`)에 있고 '사업장 명칭' 칸은 현장 이름이다 (`sapa_companies()`, 10/27 사용자 검토). 보도자료 hwpx 엔 명단이 없고 공고 PDF 에 있다.
 
 ## 구조 요약
 
