@@ -358,4 +358,20 @@ check("공개 명단: 3글자 이하 상호는 지역 없이 채택 안 함 · �
 
 st.close(); st2.close(); reg.close()
 shutil.rmtree(BATCH_ROOT / job); shutil.rmtree(BATCH_ROOT / j2); shutil.rmtree(BATCH_ROOT / j3); shutil.rmtree(BATCH_ROOT / j4)
+# ── 개인정보 처리방침 판정 (외부 호출 없음) ───────────────
+from biz_crawler import privacy_policy as pp
+_sig = pp.signals("회원가입 시 이름, 이메일을 수집합니다. 회사는 민감정보를 수집하지 않습니다. "
+                  "주민등록번호는 처리하지 않습니다. 건강기능식품을 판매합니다.")
+check("처리방침: 부정문 · '건강기능식품' 은 민감정보 아님 → B, 고유식별정보 문장이면 A",
+      _sig["민감정보"] == 0 and _sig["고유식별정보"] == 0 and _sig["회원정보"] == 1
+      and pp.grade(_sig, "원문", False) == "B"
+      and pp.grade(pp.signals("본인 확인을 위해 주민등록번호를 수집합니다."), "원문", False) == "A"
+      and pp.grade(None, "링크만", False) == "C" and pp.grade(None, "robots 차단", False) == "C" and pp.grade(None, "", True) == "B" and pp.grade(None, "", False) == "D")
+check("처리방침: 링크 찾기(javascript 제외) · 사이트 종류(스마트스토어 주문 · 예약 · 빌더 · SNS)",
+      pp.find_links('<a href="/member/privacy.html">개인정보처리방침</a><a href="javascript:x()">이용약관</a>',
+                    "http://a.com/") == (["http://a.com/member/privacy.html"], [])
+      and [pp.site_kind(u) for u in ("http://smartstore.naver.com/x", "https://booking.naver.com/x",
+                                     "http://ab.cafe24.com", "http://blog.naver.com/x", "")]
+      == ["플랫폼-주문", "플랫폼-예약", "자체", "SNS", ""])
+
 print(f"\n{sum(ok)}/{len(ok)} 통과")
